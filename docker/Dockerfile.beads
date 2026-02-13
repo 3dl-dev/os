@@ -1,0 +1,6 @@
+FROM alpine:3.21
+RUN apk add --no-cache git icu-libs zstd-libs curl bash
+RUN curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+RUN git config --global --add safe.directory /workspace
+WORKDIR /workspace
+ENTRYPOINT ["bd"]

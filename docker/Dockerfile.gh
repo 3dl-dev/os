@@ -1,0 +1,7 @@
+FROM alpine:3.21
+RUN apk add --no-cache git bash curl github-cli
+RUN adduser -D -u 1000 ghuser
+RUN git config --global --add safe.directory /workspace
+USER ghuser
+WORKDIR /workspace
+ENTRYPOINT ["gh"]

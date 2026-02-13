@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+TOOLS_DIR="$(cd "$(dirname "$REAL_SCRIPT")/.." && pwd)"
+export PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+exec docker compose \
+  -f "$TOOLS_DIR/docker/docker-compose.yml" \
+  -p "$(basename "$PROJECT_ROOT")" \
+  run --rm gh "$@"

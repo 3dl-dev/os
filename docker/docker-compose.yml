@@ -1,0 +1,23 @@
+services:
+  beads:
+    image: baron-os/beads
+    build:
+      context: .
+      dockerfile: Dockerfile.beads
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ${PROJECT_ROOT:-.}:/workspace
+    working_dir: /workspace
+
+  gh:
+    image: baron-os/gh
+    build:
+      context: .
+      dockerfile: Dockerfile.gh
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ${PROJECT_ROOT:-.}:/workspace
+      - ${HOME}/.config/gh:/home/ghuser/.config/gh
+    environment:
+      - HOME=/home/ghuser
+    working_dir: /workspace
