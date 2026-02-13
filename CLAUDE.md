@@ -6,6 +6,10 @@
 
 **OS**: The project operating system — shared tooling, user-level Claude instructions, and project template. This is the first thing cloned on a new machine. Everything here is project-agnostic; if it's specific to one project, it belongs in that project's repo instead.
 
+## Philosophy: Machines Are Cattle
+
+Machines — servers, workstations, laptops — are disposable. This repo is the single entry point that takes a bare machine to a fully operational environment. Clone it, run `setup.sh`, and everything needed to work on existing projects or spin up new ones is in place. No snowflake configurations, no "works on my machine" state. If a machine dies, a new one gets the same treatment. The OS repo is the only thing that needs to survive.
+
 ## What This Repo Contains
 
 | Directory | Purpose | Consumers |

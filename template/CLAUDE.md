@@ -1,3 +1,9 @@
+<!-- BOOTSTRAP: If this file still contains [BRACKETED PLACEHOLDERS], the project
+     has not been bootstrapped. Read BOOTSTRAP.md and follow its instructions to
+     walk the user through the interactive bootstrap process before doing anything
+     else. Do NOT run the normal session protocol (bd ready, etc.) until bootstrap
+     is complete. -->
+
 # CLAUDE.md — [PROJECT NAME] Project Instructions
 
 > OS-level instructions (session protocol, beads workflow, model routing, blog pipeline, rules) are inherited from `~/.claude/CLAUDE.md`. This file contains only project-specific configuration.

@@ -1,119 +1,141 @@
-# Bootstrap Checklist
+# Bootstrap Instructions (for Claude)
 
-Work through these questions to configure this project. Each answer fills in a section of `CLAUDE.md` or creates a file in `docs/`.
+> **You are reading this because CLAUDE.md still has `[BRACKETED PLACEHOLDERS]`.** Walk the user through the questions below, one section at a time. After each answer, apply it immediately to the relevant file. When all sections are done, finalize.
 
-When you start your first Claude Code session in this repo, you can walk through this checklist together — or fill it in yourself and let the PM agent pick it up.
+## How to Run Bootstrap
 
----
-
-## 1. Project Identity
-
-> Fills in: CLAUDE.md header
-
-- **Name**: What's the project called?
-- **One-liner**: What does it do, in one sentence?
-- **Domain**: Hardware / SaaS / data pipeline / content / research / other?
-
-## 2. Agent Roster
-
-> Fills in: CLAUDE.md Agent Roster table + creates `docs/agent-*.md` specs
-
-What specialized agents does this project need? Use `docs/agent-TEMPLATE.md` as a starting point for each.
-
-Common patterns:
-- **Hardware project**: Hardware Engineer, Tech Comms, Designer, Build Coach
-- **SaaS product**: Backend Engineer, Frontend Engineer, DevOps, QA, Technical Writer
-- **Research project**: Researcher, Data Analyst, Technical Writer
-- **Content project**: Writer, Editor, Designer
-
-For each agent, define: role, tools needed, output standards, interaction with PM.
-
-## 3. Container Services
-
-> Fills in: `docker-compose.yml` + `Dockerfile.*` + `bin/*`
-
-What project-specific tools need containerizing? Shared tools (`bd`, `gh`) are already available via the OS repo.
-
-Examples:
-- Python with numpy/scipy (engineering calcs)
-- Node with Mermaid + Pandoc (diagram/doc rendering)
-- Rust toolchain (firmware)
-- PostgreSQL (local database)
-
-For each: create a Dockerfile, add a service to `docker-compose.yml`, add a thin wrapper in `bin/`.
-
-## 4. Design Change Cascade
-
-> Fills in: CLAUDE.md Design Change Cascade section
-
-When the architecture or key specs change, what downstream reviews must happen?
-
-Hardware example:
-```
-Design Change → HW Review → Legal Review → BOM Update → Report Regen → Website Check
-```
-
-SaaS example:
-```
-Architecture Change → Security Review → Migration Plan → API Docs Update → Changelog
-```
-
-Define: the specific downstream beads, their priorities, dependencies, which agent handles each, and what each produces.
-
-## 5. Source of Truth Hierarchy
-
-> Fills in: CLAUDE.md Source of Truth Hierarchy section
-
-When artifacts disagree, which one wins?
-
-Hardware example:
-```
-Product vision → Engineering calculations → Specifications → Report
-```
-
-SaaS example:
-```
-Product requirements → API contracts → Implementation → Documentation
-```
-
-## 6. Artifact Types
-
-> Fills in: CLAUDE.md Artifact Conventions section
-
-What kinds of artifacts will this project produce?
-
-Common types:
-- Specifications (markdown in `docs/`)
-- Calculations / analysis scripts (Python in `calcs/`)
-- Diagrams (Mermaid in `docs/diagrams/`, rendered to `docs/img/`)
-- Test suites
-- Data pipelines
-- API documentation
-
-## 7. Website
-
-> Fills in: Designer agent scope, `site/` directory
-
-Does this project need a website? If yes:
-- What's the audience? (investors, users, technical reviewers, general public)
-- Static site or app? (default: static HTML/CSS in `site/`, deployed via GitHub Pages)
-- Visual identity: will be defined with the Designer agent in an early session
-
-## 8. Devblog
-
-> Already configured via OS-level CLAUDE.md. This step is confirmation.
-
-The blog pipeline (candidate accumulation → outline → voiced draft → editorial → publish) is active by default. The PM agent will flag blog-worthy moments during normal work.
-
-- **Voice profile**: `docs/agent-blog.md` carries your voice across projects. Review it — adjust if this project has a different public voice.
-- **Opt out**: If this project doesn't need a blog, remove the `docs/blog/` directory and note "No devblog" in CLAUDE.md.
+1. **One section at a time.** Ask the user the questions for a section, wait for answers, then apply them before moving to the next section.
+2. **Apply answers immediately.** Edit CLAUDE.md, create agent specs, etc. as you go — don't wait until the end.
+3. **Be conversational.** The user just created this project. They may not have firm answers for everything yet. Help them think through it. Offer sensible defaults based on what they've told you about the project.
+4. **Skip what doesn't apply.** If the user says "no website" or "no blog," skip those sections and remove the relevant placeholders/directories.
+5. **Initialize beads** (`bd init`) before starting — you'll need it to track the bootstrap itself.
 
 ---
 
-## When You're Done
+## Section 1: Project Identity
 
-1. Fill in all `[BRACKETED PLACEHOLDERS]` in `CLAUDE.md`
-2. Create agent specs in `docs/agent-*.md` (one per agent from step 2)
-3. Create any Dockerfiles and bin wrappers from step 3
-4. Delete this file (or keep it as a record of your bootstrap decisions)
-5. Commit: `git add -A && git commit -m "Bootstrap: configure project"`
+**Ask:**
+- What's the project called?
+- What does it do, in one sentence?
+- What domain is it in? (hardware / SaaS / data pipeline / content / research / other)
+
+**Apply:** Fill in the `[PROJECT NAME]` and `[One-line description]` in CLAUDE.md header. Update the repo structure section with the actual project name.
+
+---
+
+## Section 2: Agent Roster
+
+**Ask:**
+- What specialized agents does this project need beyond the PM?
+
+**Help the user decide** by offering patterns based on their domain (from Section 1):
+- **Hardware**: Hardware Engineer, Tech Comms, Designer, Build Coach
+- **SaaS**: Backend Engineer, Frontend Engineer, DevOps, QA, Technical Writer
+- **Research**: Researcher, Data Analyst, Technical Writer
+- **Content**: Writer, Editor, Designer
+
+For each agent they choose, ask: what's the role in one sentence?
+
+**Apply:**
+- Fill in the Agent Roster table in CLAUDE.md
+- Fill in the routing rules
+- Create `docs/agent-[name].md` for each agent using `docs/agent-TEMPLATE.md` as the skeleton — fill in what you can from the conversation, leave the rest as TODOs for the user to refine later
+
+---
+
+## Section 3: Task-Type → Model Mapping
+
+**Ask:**
+- What are the main types of work in this project?
+
+**Help the user map** each work type to Opus / Sonnet / Haiku based on complexity. Offer a first-pass mapping and let them adjust.
+
+**Apply:** Fill in the model mapping table in CLAUDE.md.
+
+---
+
+## Section 4: Container Services
+
+**Ask:**
+- What project-specific tools need containerizing? (compilers, linters, runtimes, databases, etc.)
+
+Shared tools (`bd`, `gh`) are already available via the OS repo — don't duplicate those.
+
+**Apply:** If the user needs project-specific services:
+- Create `Dockerfile.[service]` files
+- Add services to `docker-compose.yml`
+- Create thin wrappers in `bin/`
+
+If no project-specific tools are needed yet, note that in CLAUDE.md and move on.
+
+---
+
+## Section 5: Design Change Cascade
+
+**Ask:**
+- When the architecture or key specs change, what downstream reviews need to happen?
+
+**Help the user think through it** by walking an example: "If you changed [core design element], what would need to be re-checked?"
+
+**Apply:** Fill in the Design Change Cascade section in CLAUDE.md with the specific cascade tree, including which agent handles each step.
+
+---
+
+## Section 6: Source of Truth Hierarchy
+
+**Ask:**
+- When artifacts disagree, which one wins? What's the authority chain?
+
+**Offer an example** based on their domain:
+- Hardware: `Product vision → Engineering calculations → Specifications → Report`
+- SaaS: `Product requirements → API contracts → Implementation → Documentation`
+
+**Apply:** Fill in the Source of Truth Hierarchy section in CLAUDE.md.
+
+---
+
+## Section 7: Artifact Conventions
+
+**Ask:**
+- What kinds of artifacts will this project produce? (specs, code, calculations, diagrams, data pipelines, etc.)
+- Where should each type live in the repo?
+
+**Apply:** Fill in the Artifact Conventions section and update the Repo Structure tree in CLAUDE.md.
+
+---
+
+## Section 8: Website
+
+**Ask:**
+- Does this project need a website?
+
+If yes:
+- What's the audience?
+- Static site or app?
+
+**Apply:** If yes, note the scope in CLAUDE.md and ensure the Designer agent (or equivalent) is in the roster. If no, remove `site/` from the repo structure section.
+
+---
+
+## Section 9: Devblog
+
+**Explain:** The blog pipeline is active by default (inherited from OS-level instructions). The voice profile in `docs/agent-blog.md` carries across projects.
+
+**Ask:**
+- Keep the devblog for this project, or opt out?
+- If keeping: does this project need a different public voice than the default?
+
+**Apply:** If opting out, remove `docs/blog/` and note "No devblog" in CLAUDE.md. If keeping with a different voice, update `docs/agent-blog.md`.
+
+---
+
+## Finalize
+
+Once all sections are answered:
+
+1. **Remove the bootstrap HTML comment** from the top of CLAUDE.md
+2. **Verify** there are no remaining `[BRACKETED PLACEHOLDERS]` in CLAUDE.md
+3. **Delete this file** (BOOTSTRAP.md) — it's served its purpose
+4. **Create a bead** tracking the bootstrap: `bd create "Bootstrap: configure project" -p 0` and close it with a summary of what was set up
+5. **Commit**: stage all changes and commit with message "Bootstrap: configure project"
+6. **Tell the user** what was configured and what's still marked as TODO in agent specs
