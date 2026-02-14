@@ -2,13 +2,17 @@
 
 > **You are reading this because CLAUDE.md still has `[BRACKETED PLACEHOLDERS]`.** Walk the user through the questions below, one section at a time. After each answer, apply it immediately to the relevant file. When all sections are done, finalize.
 
+## Spin-Up Awareness
+
+Some sections may already be completed if this project was created via the OS spin-up protocol. Check each section heading for a `<!-- COMPLETED-IN-SPINUP -->` marker. **Skip any section that has this marker** — those answers were already applied during spin-up. Jump to the first unmarked section and continue from there.
+
 ## How to Run Bootstrap
 
 1. **One section at a time.** Ask the user the questions for a section, wait for answers, then apply them before moving to the next section.
 2. **Apply answers immediately.** Edit CLAUDE.md, create agent specs, etc. as you go — don't wait until the end.
 3. **Be conversational.** The user just created this project. They may not have firm answers for everything yet. Help them think through it. Offer sensible defaults based on what they've told you about the project.
 4. **Skip what doesn't apply.** If the user says "no website" or "no blog," skip those sections and remove the relevant placeholders/directories.
-5. **Initialize beads** (`bd init`) before starting — you'll need it to track the bootstrap itself.
+5. **Initialize beads** (`bd init`) before starting — you'll need it to track the bootstrap itself. (Skip if already initialized during spin-up.)
 
 ---
 
@@ -134,8 +138,9 @@ If yes:
 Once all sections are answered:
 
 1. **Remove the bootstrap HTML comment** from the top of CLAUDE.md
-2. **Verify** there are no remaining `[BRACKETED PLACEHOLDERS]` in CLAUDE.md
-3. **Delete this file** (BOOTSTRAP.md) — it's served its purpose
-4. **Create a bead** tracking the bootstrap: `bd create "Bootstrap: configure project" -p 0` and close it with a summary of what was set up
-5. **Commit**: stage all changes and commit with message "Bootstrap: configure project"
-6. **Tell the user** what was configured and what's still marked as TODO in agent specs
+2. **Remove any `<!-- COMPLETED-IN-SPINUP -->` markers** remaining in this file
+3. **Verify** there are no remaining `[BRACKETED PLACEHOLDERS]` in CLAUDE.md
+4. **Delete this file** (BOOTSTRAP.md) — it's served its purpose
+5. **Create a bead** tracking the bootstrap: `bd create "Bootstrap: configure project" -p 0` and close it with a summary of what was set up (skip if a spin-up bootstrap bead already exists — check `bd list` first)
+6. **Commit**: stage all changes and commit with message "Bootstrap: configure project"
+7. **Tell the user** what was configured and what's still marked as TODO in agent specs

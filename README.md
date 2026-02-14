@@ -45,13 +45,30 @@ Claude reads the project's `CLAUDE.md`, runs `bd ready`, and picks up where you 
 
 ## Creating a New Project
 
+### Conversational (recommended)
+
+```bash
+cd ~/projects/os
+claude
+```
+
+Describe the project you want to create. Claude handles everything — scaffolding the directory, pre-filling CLAUDE.md with your project identity, agents, and model mapping, creating the GitHub repo, and initializing beads. When it's done, it tells you to:
+
+```bash
+cd ~/projects/<project-name> && claude
+```
+
+The new project session picks up where spin-up left off, walking you through the remaining setup (container services, design cascade, artifact conventions, etc.).
+
+### Manual (alternative)
+
 ```bash
 new-project ~/projects/<project-name>
 cd ~/projects/<project-name>
 claude
 ```
 
-Claude detects the unbootstrapped project and walks you through an interactive setup: naming the project, choosing agents, defining the architecture, and configuring tooling. Everything gets written to the project's `CLAUDE.md` and committed.
+Claude detects the unbootstrapped project and walks you through the full interactive setup from scratch.
 
 ## What's in the Box
 

@@ -18,8 +18,15 @@ Machines — servers, workstations, laptops — are disposable. This repo is the
 | `docker/` | Shared Dockerfiles + compose for `bd` and `gh` | Every project (via PATH wrappers) |
 | `bin/` | Self-resolving wrappers: `bd`, `gh` (symlinked → `~/.local/bin/`) | Every project |
 | `template/` | Project skeleton: CLAUDE.md, BOOTSTRAP.md, agent specs, blog dirs | `new-project.sh` copies this |
+| `docs/` | OS-level protocols and reference docs | Claude sessions in this repo |
 | `setup.sh` | One-time machine bootstrap (symlinks bins + CLAUDE.md) | New machine setup |
 | `new-project.sh` | Scaffold new project from template | User starting a new project |
+
+## Project Spin-Up
+
+When a user describes a new project in this repo's context, follow the **spin-up protocol** in `docs/spin-up-protocol.md`. This handles conversational intake (project name, agents, model mapping) and mechanical execution (scaffolding, CLAUDE.md pre-fill, GitHub repo creation, beads init) — then hands the user off to the new project directory to finish bootstrap.
+
+**Trigger:** User describes a project they want to create, or asks to spin up / start / create a new project.
 
 ## Agent Roster
 
@@ -38,6 +45,15 @@ This repo is small and meta — it doesn't need a full agent team.
 | Evolve OS patterns (new workflow, new rule) | **Opus** | Cross-project pattern synthesis |
 | Update shared instructions or template | **Sonnet** | Structured editing with consistency checks |
 | Fix wrapper scripts or Dockerfiles | **Haiku** | Mechanical: shell scripts, Docker config |
+
+## Token Optimization
+
+**Standing order: minimize token utilization.** See `~/.claude/CLAUDE.md` for the full policy. Key points:
+- Default to Haiku for mechanical work
+- Use tools and `--json` parsing over LLM interpretation
+- Concise subagent prompts with file refs, not pasted content
+- One focused task per agent dispatch
+- No verbose outputs — write the deliverable, not a summary of it
 
 ## Design Change Cascade
 
@@ -97,9 +113,11 @@ os/
 ├── bin/
 │   ├── bd                 # Beads wrapper (symlinked → ~/.local/bin/)
 │   └── gh                 # GitHub CLI wrapper (symlinked → ~/.local/bin/)
+├── docs/
+│   └── spin-up-protocol.md # Conversational project creation protocol
 ├── template/              # Project skeleton (copied by new-project.sh)
 │   ├── CLAUDE.md          # Project instructions template
-│   ├── BOOTSTRAP.md       # 8-question setup checklist
+│   ├── BOOTSTRAP.md       # 9-section setup checklist (spin-up aware)
 │   ├── docker-compose.yml # Project-specific services placeholder
 │   ├── .gitignore
 │   └── docs/

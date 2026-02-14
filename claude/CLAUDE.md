@@ -57,6 +57,43 @@ Use `--json` flag for any programmatic parsing. Track everything — not just bu
    ```
 2. During `bd ready` triage, if a bead looks like it should be ready, run `bd show <id>` and check whether its blockers are actually closed. If so, `dep remove` the stale links.
 
+## Cross-Project Coordination
+
+All projects in the portfolio share these conventions. Full protocol: `docs/cross-project-protocol.md` in the OS repo.
+
+### Project Registry
+
+| Repo Dir | Bead Prefix | Description |
+|----------|-------------|-------------|
+| `3dl` | `3dl-` | Holding company — strategy, operations, executive team |
+| `website` | `website-` | Public website (3dl.dev / thirdiv.com) |
+| `mag-shield` | `mag-shield-` | Aerocloak / magnetic shielding research |
+| `galtrader` | `galtrader-` | GalTrader game project |
+| `vms` | `vms-` | VMS emulator |
+
+All repos live under `/home/baron/projects/`.
+
+### Staff Signals
+
+When a project identifies work requiring human action, create a signal bead in the local repo:
+
+```bash
+bd create "STAFF-SIGNAL: <action description>" -p <priority>
+```
+
+Include in the description: what action, why it needs a human, everything pre-packaged to execute, estimated time. The 3DL CEO sweep imports these into the canonical staff queue.
+
+### Cross-Project References
+
+Reference beads in other repos using `<repo-dir>/<bead-id>`:
+
+```
+galtrader/galtrader-d0a    # bead in the galtrader repo
+3dl/3dl-abc                # bead in the 3dl repo
+```
+
+Use in bead descriptions, exec log entries, and cross-repo docs.
+
 ## Model Routing — Cost Optimization
 
 **Default: use the cheapest model that can do the job well.** The PM agent selects the model tier when spawning subagents via the `model` parameter.
@@ -80,6 +117,19 @@ If a subagent produces poor results (shallow analysis, missed constraints, wrong
 3. **Log the escalation** in the bead audit trail so we learn which task types need stronger models.
 
 The goal is to start cheap and escalate when needed, not to default to expensive.
+
+### Token Optimization — Standing Order
+
+**Minimize token utilization in every interaction. This is a standing order for all agents in all projects.**
+
+1. **Default to Haiku** for anything that doesn't require Sonnet/Opus judgment. Mechanical edits, file lookups, status checks, template work, bead operations — all Haiku.
+2. **Use tools, not generation**. Read files with offset/limit instead of reading entire files. Use `--json` flags and pipe to `python3 -c` for parsing instead of having LLMs interpret long text. Use `bd` commands directly instead of asking agents to interpret bead state.
+3. **Concise prompts to subagents**. Provide context references (file paths, bead IDs), not full document contents. The agent can read what it needs. Don't paste entire documents into prompts.
+4. **Don't re-read files already in context**. If you read a file earlier in the conversation, reference it — don't read it again.
+5. **Limit scope per agent**. One clear task per dispatch. Don't ask an agent to "research X and also Y and also Z" when three focused Haiku agents would be cheaper.
+6. **Prefer Explore agents for search**. The Explore subagent type is optimized for codebase search with minimal token overhead.
+7. **No verbose outputs**. Agents should produce tight deliverables, not essays. If the output is a file, write the file — don't also produce a summary of what you wrote.
+8. **Measure and learn**. When an agent completes, note the token usage. If a Sonnet task used <20k tokens, it was probably a Haiku task. Adjust routing for next time.
 
 ## Architecture/Design Change Workflow
 
@@ -159,15 +209,19 @@ The devblog has a 4-stage pipeline. Every post flows through all 4 stages, track
 4. Repeat until user approves
 5. PM updates bead: "Editorial approved"
 
-### Stage 3: Publish to Website (Designer Agent)
+### Stage 3: Publish to Website (Cross-Repo Handoff)
 
 **Trigger**: Editorial approval on bead.
 
-**Process**:
-1. Designer Agent (Sonnet) converts approved post to HTML in `site/blog/[slug].html`
-2. Updates `site/blog.html` index with new post entry
-3. Matches existing site chrome (nav, palette, typography)
-4. PM closes bead: "Published to website"
+**Process** (Marketing agent, from the 3dl session):
+1. Read approved post from `docs/blog/posts/[slug].md`
+2. Convert to HTML matching the website's existing chrome (nav, palette, typography)
+3. Write to `/home/baron/projects/website/blog/[slug].html`
+4. Update blog index at `/home/baron/projects/website/blog.html`
+5. Commit in the website repo referencing the blog bead
+6. PM closes bead: "Published to website"
+
+See `docs/cross-project-protocol.md` in the OS repo for full handoff mechanics.
 
 ### Stage 4: Backdate if Needed
 

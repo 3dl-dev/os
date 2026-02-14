@@ -56,6 +56,10 @@ Design Change (parent)
        ...
 ```
 
+## Cross-Project Coordination
+
+This project is part of the 3DL portfolio. Cross-project conventions (staff signals, cross-references, project registry) are inherited from `~/.claude/CLAUDE.md`. See `docs/cross-project-protocol.md` in the OS repo for full protocol.
+
 ## Source of Truth Hierarchy
 
 When artifacts disagree, resolve conflicts in this order:
