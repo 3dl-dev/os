@@ -1254,6 +1254,8 @@ def generate_detail_page(bead_item, detail_data, timestamp, title_map, status_ma
     {deps_html}
 
     {artifacts_html}
+
+    {_render_action_buttons(bead_id, status)}
   </div>
 
   <footer class="footer">
@@ -1265,8 +1267,29 @@ def generate_detail_page(bead_item, detail_data, timestamp, title_map, status_ma
     </div>
   </footer>
 
+  <script src="../staff-actions.js"></script>
 </body>
 </html>'''
+
+
+def _render_action_buttons(bead_id, status):
+    """Render action buttons for a bead detail page."""
+    if status in ('closed', 'done'):
+        return ''
+    bid = h(bead_id)
+    return f'''<section class="detail-section action-section">
+      <h2>Actions</h2>
+      <div class="action-group">
+        <button data-action="done" data-bead-id="{bid}" class="btn btn-done">Mark Done</button>
+        <button data-action="approve" data-bead-id="{bid}" class="btn btn-approve">Approve</button>
+        <button data-action="reject" data-bead-id="{bid}" class="btn btn-reject">Reject</button>
+        <button data-action="blocked" data-bead-id="{bid}" class="btn btn-blocked">Report Blocked</button>
+      </div>
+      <div class="action-group action-comment">
+        <textarea name="note" placeholder="Add a note or comment..." rows="3"></textarea>
+        <button data-action="comment" data-bead-id="{bid}" class="btn btn-comment">Add Comment</button>
+      </div>
+    </section>'''
 
 
 def generate_doc_page(rel_path, content, timestamp):
@@ -1398,10 +1421,10 @@ def generate_detail_pages(data, timestamp):
 def copy_css_templates():
     """Copy CSS templates from the web directory to the dashboard repo."""
     script_dir = Path(__file__).resolve().parent
-    for css_file in ['style.css', 'detail.css']:
-        src = script_dir / css_file
+    for asset_file in ['style.css', 'detail.css']:
+        src = script_dir / asset_file
         if src.exists():
-            dst = DASHBOARD_REPO / css_file
+            dst = DASHBOARD_REPO / asset_file
             shutil.copy2(str(src), str(dst))
 
 
@@ -1446,7 +1469,7 @@ def main():
     print(f'  Detail pages: {bead_count} bead + {doc_count} doc')
 
     # Commit
-    subprocess.run(['git', 'add', 'index.html', 'style.css', 'detail.css', 'bead/', 'doc/'], cwd=str(DASHBOARD_REPO))
+    subprocess.run(['git', 'add', 'index.html', 'style.css', 'detail.css', 'staff-actions.js', 'bead/', 'doc/'], cwd=str(DASHBOARD_REPO))
     result = subprocess.run(
         ['git', 'commit', '-m', f'Dashboard update: {timestamp}'],
         cwd=str(DASHBOARD_REPO), capture_output=True, text=True
