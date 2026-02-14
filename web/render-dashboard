@@ -764,12 +764,36 @@ def collect_data():
             'priority': 1,  # Architecture docs are high priority
         })
 
+    # Recently completed staff/review beads (feedback loop)
+    recently_completed = []
+    for b in all_beads.get(ORG_REPO_NAME, []):
+        if b.get('status') != 'closed':
+            continue
+        title = b.get('title', '')
+        labels = b.get('labels') or []
+        is_staff = (title.startswith('STAFF:') or title.startswith('STAFF-SIGNAL:')
+                    or 'staff-queue' in labels)
+        is_review = any(kw in title.upper() for kw in ['REVIEW', 'APPROVE', 'SIGN'])
+        if not is_staff and not is_review:
+            continue
+        closed_at = b.get('updated_at', b.get('updated', b.get('closed_at', '')))[:10]
+        recently_completed.append({
+            'id': b['id'],
+            'title': title,
+            'closed_at': closed_at,
+            'close_reason': b.get('close_reason', ''),
+            'priority': b.get('priority', 99),
+        })
+    recently_completed.sort(key=lambda x: x['closed_at'], reverse=True)
+    recently_completed = recently_completed[:10]
+
     exec_entries = get_exec_log_entries(org_repo_path)
 
     return {
         'review_queue': review_queue,
         'staff_tasks': staff_tasks,
         'standalone_reviews': standalone_reviews,
+        'recently_completed': recently_completed,
         'projects': project_summaries,
         'exec_entries': exec_entries,
         'bead_title_map': bead_title_map,
@@ -936,6 +960,32 @@ def render_task_card(item):
 </div></a>'''
 
 
+# ── HTML Generation: Recently Completed ──
+
+def _render_completed_item(item):
+    """Render a recently completed task/review item."""
+    bead_id = h(item['id'])
+    title = h(item['title'])
+    closed_at = h(item['closed_at'])
+    reason = item.get('close_reason', '')
+    reason_html = ''
+    if reason:
+        short_reason = reason[:120] + '...' if len(reason) > 120 else reason
+        reason_html = f'<div class="completed-reason">{h(short_reason)}</div>'
+
+    return f'''<div class="completed-item">
+  <span class="completed-check">&#x2713;</span>
+  <div class="completed-info">
+    <span class="completed-title">{title}</span>
+    {reason_html}
+  </div>
+  <div class="completed-meta">
+    <span class="card-id">{bead_id}</span>
+    <span class="completed-date">{closed_at}</span>
+  </div>
+</div>'''
+
+
 # ── HTML Generation: Exec Digest ──
 
 def render_digest_entry(entry):
@@ -1003,7 +1053,21 @@ def generate_html(data, timestamp):
     else:
         tasks_section = '<div class="empty-state">No pending staff tasks.</div>'
 
-    # Section 3: AI Team Activity (exec digest)
+    # Section 3: Recently Completed (feedback loop)
+    if data['recently_completed']:
+        completed_items = '\n'.join(_render_completed_item(c) for c in data['recently_completed'])
+        completed_section = f'''<section class="section" id="recently-completed">
+    <div class="container">
+      <div class="section-label">Done</div>
+      <h2 class="section-title">Recently Completed</h2>
+      <p class="section-desc">Tasks and reviews you completed. See what your work unblocked.</p>
+      <div class="completed-list">{completed_items}</div>
+    </div>
+  </section>'''
+    else:
+        completed_section = ''
+
+    # Section 4: AI Team Activity (exec digest)
     if data['exec_entries']:
         digest_entries = '\n'.join(render_digest_entry(e) for e in data['exec_entries'])
         digest_section = f'<div class="digest-list">{digest_entries}</div>'
@@ -1087,6 +1151,8 @@ def generate_html(data, timestamp):
       {tasks_section}
     </div>
   </section>
+
+  {completed_section}
 
   <section class="section" id="team-activity">
     <div class="container">
