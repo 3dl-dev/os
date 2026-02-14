@@ -600,6 +600,34 @@ ROLE_LABELS = {
 EXCLUDE_LABELS = {'staff-queue'}
 
 
+# ── Queue Prioritization Engine ──
+
+def _queue_sort_key(item):
+    """Multi-factor sort key for staff queue ordering.
+
+    Sort order (lower = higher priority):
+    1. Priority tier (P0 first)
+    2. Has artifacts (deliverables ready to review sort before metadata-only items)
+    3. Age penalty (older items get a small boost to prevent staleness)
+    4. Has estimate (packaged items with time estimates sort before unpackaged)
+    5. Created date (tie-breaker: older first)
+    """
+    priority = int(item.get('priority', 99))
+    has_artifacts = 0 if item.get('artifacts') else 1
+    has_estimate = 0 if item.get('estimate') else 1
+
+    # Age boost: items older than 3 days get priority bumped by 0.5
+    created = item.get('created', '9999')
+    try:
+        from datetime import datetime as _dt
+        age_days = (_dt.now() - _dt.strptime(created[:10], '%Y-%m-%d')).days
+    except (ValueError, TypeError):
+        age_days = 0
+    age_penalty = -0.5 if age_days >= 3 else 0
+
+    return (priority + age_penalty, has_artifacts, has_estimate, created)
+
+
 # ── Data Assembly ──
 
 def collect_data():
@@ -712,8 +740,8 @@ def collect_data():
             item['section'] = 'Staff Tasks'
             staff_tasks.append(item)
 
-    review_queue.sort(key=lambda x: (int(x['priority']), x['created']))
-    staff_tasks.sort(key=lambda x: (int(x['priority']), x['created']))
+    review_queue.sort(key=_queue_sort_key)
+    staff_tasks.sort(key=_queue_sort_key)
 
     # Standalone review docs -- files on disk that should surface as review items
     # even without a bead explicitly referencing them
