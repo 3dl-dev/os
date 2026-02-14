@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Thin wrapper: invokes os/web/render-dashboard.
+# If --config is not provided, passes through all args as-is
+# (the renderer will look for dashboard-config.yml next to itself).
+set -euo pipefail
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+TOOLS_DIR="$(cd "$(dirname "$REAL_SCRIPT")/.." && pwd)"
+exec python3 "$TOOLS_DIR/web/render-dashboard" "$@"

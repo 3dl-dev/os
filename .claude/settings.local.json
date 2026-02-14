@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bd:*)",
+      "Bash(/home/baron/projects/os/bin/bd create:*)",
+      "Bash(/home/baron/projects/os/bin/bd update:*)",
+      "Bash(/home/baron/projects/os/bin/bd close:*)",
+      "Bash(/home/baron/projects/os/bin/bd list:*)",
+      "Bash(/home/baron/projects/os/bin/bd sync:*)",
+      "Bash(/home/baron/projects/os/bin/bd import:*)",
+      "Bash(/home/baron/projects/os/bin/bd daemon stop:*)",
+      "Bash(/home/baron/projects/os/bin/bd daemons list:*)",
+      "Bash(/home/baron/projects/os/bin/bd daemons stop:*)",
+      "Bash(/home/baron/projects/os/bin/bd init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git -C /home/baron/projects/os log --oneline --all)",
+      "Bash(/home/baron/projects/os/bin/bd ready:*)",
+      "Bash(/home/baron/projects/os/bin/bd dep add:*)",
+      "Bash(/home/baron/projects/os/bin/bd dep remove:*)",
+      "Bash(/home/baron/projects/os/new-project.sh:*)",
+      "Bash(bin/bd update:*)",
+      "Bash(gh repo create:*)",
+      "Bash(/home/baron/projects/os/bin/gh repo create:*)",
+      "Bash(git push:*)",
+      "Bash(bin/bd close:*)",
+      "Bash(bin/bd sync:*)"
+    ]
+  }
+}

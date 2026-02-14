@@ -8,6 +8,7 @@ echo "Installing OS tools..."
 mkdir -p "$HOME/.local/bin"
 ln -sf "$SCRIPT_DIR/bin/bd" "$HOME/.local/bin/bd"
 ln -sf "$SCRIPT_DIR/bin/gh" "$HOME/.local/bin/gh"
+ln -sf "$SCRIPT_DIR/bin/render-dashboard" "$HOME/.local/bin/render-dashboard"
 ln -sf "$SCRIPT_DIR/new-project.sh" "$HOME/.local/bin/new-project"
 
 # Symlink user-level Claude instructions

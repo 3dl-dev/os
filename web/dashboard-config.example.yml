@@ -1,0 +1,23 @@
+# Dashboard configuration example
+#
+# Copy this file and customize for your organization.
+# Usage: render-dashboard --config /path/to/your/dashboard.yml
+
+# Projects to scan for beads (name -> repo path)
+projects:
+  myorg: /home/user/projects/myorg
+  project-a: /home/user/projects/project-a
+  project-b: /home/user/projects/project-b
+
+# Where to write the generated dashboard (must be a git repo)
+dashboard_repo: /home/user/projects/dashboard
+
+# Which project above is the "organization" repo (exec log, agent specs, etc.)
+org_repo: myorg
+
+# Documents that should appear in the review queue even without a bead reference.
+# These are checked in the org_repo.
+standalone_review_docs:
+  - path: docs/some-design-doc.md
+    action: Review design document
+    agent: cpeo

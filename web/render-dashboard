@@ -1,0 +1,1465 @@
+#!/usr/bin/env python3
+"""Render the Executive Dashboard.
+
+Reads beads state from all project repos and exec log entries from the org repo,
+generates static HTML, and writes to the dashboard repo.
+
+Deliverable-centric design: the dashboard surfaces WORK PRODUCTS that need
+the founder's eyes, not bead metadata. Items with linked documents render
+the actual content inline.
+
+Usage: render-dashboard [--config PATH] [--push]
+
+Config file (YAML) defines:
+  projects: dict of name -> repo path
+  dashboard_repo: path to the output repo
+  org_repo: which project name is the "organization" (for exec log, agent specs)
+  standalone_review_docs: list of {path, action, agent}
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from datetime import datetime
+
+# ── Configuration Loading ──
+
+def find_config():
+    """Find config file from --config flag or default locations."""
+    # Check for --config flag
+    for i, arg in enumerate(sys.argv):
+        if arg == '--config' and i + 1 < len(sys.argv):
+            return Path(sys.argv[i + 1])
+
+    # Default: look relative to this script
+    script_dir = Path(__file__).resolve().parent
+    default = script_dir / 'dashboard-config.yml'
+    if default.exists():
+        return default
+
+    return None
+
+
+def load_config(config_path):
+    """Load YAML config. Uses a minimal parser to avoid external deps."""
+    if config_path is None:
+        print('Error: No config file found. Use --config PATH or place dashboard-config.yml next to this script.', file=sys.stderr)
+        sys.exit(1)
+
+    if not config_path.exists():
+        print(f'Error: Config file not found: {config_path}', file=sys.stderr)
+        sys.exit(1)
+
+    # Minimal YAML parser — handles the flat structure we need
+    config = {
+        'projects': {},
+        'dashboard_repo': '',
+        'org_repo': '',
+        'standalone_review_docs': [],
+    }
+
+    content = config_path.read_text()
+    lines = content.split('\n')
+
+    current_section = None
+    current_list_item = None
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Skip comments and blank lines
+        if not stripped or stripped.startswith('#'):
+            i += 1
+            continue
+
+        indent = len(line) - len(line.lstrip())
+
+        # Top-level keys
+        if indent == 0 and ':' in stripped:
+            key, _, val = stripped.partition(':')
+            key = key.strip()
+            val = val.strip()
+
+            if key == 'projects':
+                current_section = 'projects'
+            elif key == 'standalone_review_docs':
+                current_section = 'standalone_review_docs'
+            elif key == 'dashboard_repo':
+                config['dashboard_repo'] = val.strip("'\"")
+                current_section = None
+            elif key == 'org_repo':
+                config['org_repo'] = val.strip("'\"")
+                current_section = None
+            else:
+                current_section = None
+
+        # Nested under projects
+        elif current_section == 'projects' and indent > 0:
+            if ':' in stripped:
+                key, _, val = stripped.partition(':')
+                config['projects'][key.strip()] = val.strip().strip("'\"")
+
+        # Nested under standalone_review_docs
+        elif current_section == 'standalone_review_docs' and indent > 0:
+            if stripped.startswith('- path:'):
+                val = stripped[len('- path:'):].strip().strip("'\"")
+                current_list_item = {'path': val, 'action': 'Review', 'agent': ''}
+                config['standalone_review_docs'].append(current_list_item)
+            elif stripped.startswith('action:') and current_list_item is not None:
+                current_list_item['action'] = stripped[len('action:'):].strip().strip("'\"")
+            elif stripped.startswith('agent:') and current_list_item is not None:
+                current_list_item['agent'] = stripped[len('agent:'):].strip().strip("'\"")
+
+        i += 1
+
+    return config
+
+
+def resolve_config(config):
+    """Resolve config values into runtime objects."""
+    projects = {}
+    for name, path_str in config['projects'].items():
+        # Expand ~ and env vars
+        expanded = os.path.expanduser(os.path.expandvars(path_str))
+        projects[name] = Path(expanded)
+
+    dashboard_repo = Path(os.path.expanduser(os.path.expandvars(config['dashboard_repo'])))
+    org_repo_name = config.get('org_repo', '')
+
+    standalone_review_docs = config.get('standalone_review_docs', [])
+
+    return projects, dashboard_repo, org_repo_name, standalone_review_docs
+
+
+def find_bd():
+    """Find the bd binary on PATH or from known location."""
+    # Check PATH first
+    bd_path = shutil.which('bd')
+    if bd_path:
+        return bd_path
+
+    # Fallback: check relative to this script (os repo)
+    script_dir = Path(__file__).resolve().parent
+    os_bd = script_dir.parent / 'bin' / 'bd'
+    if os_bd.exists():
+        return str(os_bd)
+
+    print('Error: bd not found on PATH or in os/bin/', file=sys.stderr)
+    sys.exit(1)
+
+
+# ── Module-level state (set by main) ──
+
+PROJECTS = {}
+DASHBOARD_REPO = Path('.')
+ORG_REPO_NAME = ''
+BD = ''
+STANDALONE_REVIEW_DOCS = []
+
+
+# ── Data Collection ──
+
+def get_beads(repo_path):
+    """Get all beads from a repo."""
+    try:
+        result = subprocess.run(
+            [BD, 'list', '--json', '--no-daemon'],
+            capture_output=True, text=True, cwd=str(repo_path), timeout=30
+        )
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        pass
+    return []
+
+
+def get_bead_detail(repo_path, bead_id):
+    """Get full bead detail including dependencies via bd show --json."""
+    try:
+        result = subprocess.run(
+            [BD, 'show', bead_id, '--json', '--no-daemon'],
+            capture_output=True, text=True, cwd=str(repo_path), timeout=30
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            if isinstance(data, list) and len(data) > 0:
+                return data[0]
+            return data
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        pass
+    return None
+
+
+def get_exec_log_entries(repo_path, limit=20):
+    """Read recent exec log entries."""
+    log_dir = repo_path / 'docs' / 'exec-log'
+    entries = []
+    if not log_dir.exists():
+        return entries
+    for agent_dir in sorted(log_dir.iterdir()):
+        if not agent_dir.is_dir():
+            continue
+        for f in sorted(agent_dir.glob('*.md'), reverse=True)[:5]:
+            content = f.read_text()
+            title = f.stem
+            for line in content.split('\n'):
+                if line.startswith('# '):
+                    title = line[2:].strip()
+                    break
+            rel_path = str(f.relative_to(repo_path))
+            entries.append({
+                'agent': agent_dir.name,
+                'date': f.name[:10] if len(f.name) >= 10 else 'unknown',
+                'title': title,
+                'filename': f.name,
+                'rel_path': rel_path,
+                'preview': get_preview(content),
+                'full_content': content,
+            })
+    return sorted(entries, key=lambda e: e['date'], reverse=True)[:limit]
+
+
+def get_preview(content, max_chars=200):
+    """Get first meaningful paragraph from markdown content, truncated smartly."""
+    preview_lines = []
+    char_count = 0
+
+    for line in content.split('\n'):
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#') or stripped.startswith('>') or stripped == '---':
+            continue
+
+        potential_count = char_count + len(stripped) + (1 if preview_lines else 0)
+        if potential_count > max_chars and preview_lines:
+            break
+
+        preview_lines.append(stripped)
+        char_count = potential_count
+
+        if char_count >= 150 and any(stripped.endswith(c) for c in '.!?'):
+            break
+
+    result = ' '.join(preview_lines)
+    if len(result) > max_chars:
+        result = result[:max_chars].rsplit(' ', 1)[0] + '...'
+    elif result != content.strip() and len(preview_lines) > 0:
+        if not result.endswith('...') and not result.endswith('.'):
+            result += '...'
+
+    return result
+
+
+def extract_estimate(description):
+    """Try to extract time estimate from description.
+
+    Prefers structured 'Est: XX min' patterns over full lines.
+    """
+    # First: try structured Est: patterns (returns just the estimate)
+    for line in description.split('\n'):
+        m = re.search(r'Est:\s*(\d+[-\d]*\s*(?:min|hour|hr|day)\w*)', line, re.IGNORECASE)
+        if m:
+            return m.group(1)
+    # Second: try Estimated time / Time: lines
+    for line in description.split('\n'):
+        lower = line.lower()
+        if 'estimated time' in lower or 'time estimate' in lower:
+            m = re.search(r'(\d+[-\d]*\s*(?:min|hour|hr|day)\w*)', line, re.IGNORECASE)
+            if m:
+                return m.group(1)
+    return ''
+
+
+def extract_desc_preview(description, max_chars=300):
+    """Extract a concise preview of bead description, 2-3 meaningful lines max."""
+    lines = []
+    char_count = 0
+    line_count = 0
+
+    for line in description.split('\n'):
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+
+        potential_count = char_count + len(stripped) + (1 if lines else 0)
+        if potential_count > max_chars and lines:
+            break
+
+        if line_count >= 3:
+            break
+
+        lines.append(stripped)
+        char_count = potential_count
+        line_count += 1
+
+        if char_count >= 150 and any(stripped.endswith(c) for c in '.!?'):
+            break
+
+    result = '\n'.join(lines)
+
+    if len(result) > max_chars:
+        result = result[:max_chars].rsplit('\n', 1)[0]
+        if not result.endswith('.'):
+            result += '...'
+    elif result != description.strip() and result and not result.endswith('.'):
+        if not result.endswith('...'):
+            result += '...'
+
+    return result
+
+
+# ── Markdown to HTML Converter (stdlib only) ──
+
+def md_to_html(text):
+    """Convert markdown to HTML using regex-based parsing.
+
+    Handles: headings, paragraphs, lists (ul/ol), bold, italic, code blocks,
+    inline code, links, horizontal rules, tables.
+    """
+    lines = text.split('\n')
+    html_parts = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # Fenced code block
+        if line.strip().startswith('```'):
+            lang = line.strip()[3:].strip()
+            code_lines = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith('```'):
+                code_lines.append(h(lines[i]))
+                i += 1
+            i += 1  # skip closing ```
+            code_content = '\n'.join(code_lines)
+            html_parts.append(f'<pre><code>{code_content}</code></pre>')
+            continue
+
+        # Horizontal rule
+        if re.match(r'^[\s]*[-*_]{3,}\s*$', line):
+            html_parts.append('<hr>')
+            i += 1
+            continue
+
+        # Table detection: line with | separators
+        if '|' in line and i + 1 < len(lines) and re.match(r'^[\s]*\|?[\s]*[-:]+', lines[i + 1]):
+            table_lines = []
+            while i < len(lines) and '|' in lines[i]:
+                table_lines.append(lines[i])
+                i += 1
+            html_parts.append(render_table(table_lines))
+            continue
+
+        # Headings
+        m = re.match(r'^(#{1,6})\s+(.*)', line)
+        if m:
+            level = len(m.group(1))
+            content = inline_md(m.group(2))
+            html_parts.append(f'<h{level}>{content}</h{level}>')
+            i += 1
+            continue
+
+        # Unordered list
+        if re.match(r'^[\s]*[-*+]\s', line):
+            items = []
+            while i < len(lines) and re.match(r'^[\s]*[-*+]\s', lines[i]):
+                item_text = re.sub(r'^[\s]*[-*+]\s+', '', lines[i])
+                items.append(f'<li>{inline_md(item_text)}</li>')
+                i += 1
+            html_parts.append('<ul>' + ''.join(items) + '</ul>')
+            continue
+
+        # Ordered list
+        if re.match(r'^[\s]*\d+\.\s', line):
+            items = []
+            while i < len(lines) and re.match(r'^[\s]*\d+\.\s', lines[i]):
+                item_text = re.sub(r'^[\s]*\d+\.\s+', '', lines[i])
+                items.append(f'<li>{inline_md(item_text)}</li>')
+                i += 1
+            html_parts.append('<ol>' + ''.join(items) + '</ol>')
+            continue
+
+        # Blank line
+        if not line.strip():
+            i += 1
+            continue
+
+        # Paragraph
+        para_lines = []
+        while i < len(lines):
+            cl = lines[i]
+            if not cl.strip():
+                break
+            if re.match(r'^#{1,6}\s', cl):
+                break
+            if cl.strip().startswith('```'):
+                break
+            if re.match(r'^[\s]*[-*_]{3,}\s*$', cl):
+                break
+            if re.match(r'^[\s]*[-*+]\s', cl) and not para_lines:
+                break
+            if re.match(r'^[\s]*\d+\.\s', cl) and not para_lines:
+                break
+            if '|' in cl and not para_lines:
+                # Could be start of a table
+                break
+            para_lines.append(cl)
+            i += 1
+        if para_lines:
+            content = inline_md('<br>\n'.join(para_lines))
+            html_parts.append(f'<p>{content}</p>')
+            continue
+
+        i += 1
+
+    return '\n'.join(html_parts)
+
+
+def render_table(lines):
+    """Render a markdown table to HTML."""
+    if len(lines) < 2:
+        return ''
+    # Parse header
+    header_cells = [c.strip() for c in lines[0].strip().strip('|').split('|')]
+    # Skip separator line (line[1])
+    # Parse body rows
+    rows = []
+    for line in lines[2:]:
+        cells = [c.strip() for c in line.strip().strip('|').split('|')]
+        rows.append(cells)
+
+    thead = '<tr>' + ''.join(f'<th>{inline_md(c)}</th>' for c in header_cells) + '</tr>'
+    tbody_rows = []
+    for row in rows:
+        tbody_rows.append('<tr>' + ''.join(f'<td>{inline_md(c)}</td>' for c in row) + '</tr>')
+    tbody = ''.join(tbody_rows)
+    return f'<table><thead>{thead}</thead><tbody>{tbody}</tbody></table>'
+
+
+def inline_md(text):
+    """Convert inline markdown: bold, italic, code, links."""
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
+    text = re.sub(r'__([^_]+)__', r'<strong>\1</strong>', text)
+    text = re.sub(r'(?<!\w)\*([^*]+)\*(?!\w)', r'<em>\1</em>', text)
+    text = re.sub(r'(?<!\w)_([^_]+)_(?!\w)', r'<em>\1</em>', text)
+    return text
+
+
+# ── Artifact Detection & Rendering ──
+
+def detect_artifact_paths(description):
+    """Scan a bead description for references to markdown files.
+
+    Looks for patterns like docs/templates/msa.md, docs/exec-log/..., etc.
+    Returns list of relative paths found. Filters out glob patterns like docs/**/*.md.
+    """
+    paths = []
+    for m in re.finditer(r'(docs/[^\s,)\"\']+\.md)', description):
+        path = m.group(1)
+        if '*' in path:
+            continue  # skip glob patterns
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
+def read_artifact(repo_path, rel_path):
+    """Read a markdown file and return its content.
+
+    Returns (rel_path, content, found) tuple.
+    """
+    full_path = repo_path / rel_path
+    if full_path.exists():
+        try:
+            content = full_path.read_text()
+            return (rel_path, content, True)
+        except Exception:
+            return (rel_path, '', False)
+    return (rel_path, '', False)
+
+
+def render_artifact_preview(content, max_chars=600):
+    """Render first ~600 chars of markdown content as HTML preview.
+
+    Truncates at a paragraph/sentence boundary and adds a fade.
+    """
+    lines = content.split('\n')
+    preview_lines = []
+    char_count = 0
+
+    for line in lines:
+        potential = char_count + len(line) + 1
+        if potential > max_chars and preview_lines:
+            break
+        preview_lines.append(line)
+        char_count = potential
+
+    preview_md = '\n'.join(preview_lines)
+    return md_to_html(preview_md)
+
+
+def render_artifact_full(repo_path, rel_path):
+    """Read a markdown file and render it to HTML fully.
+
+    Returns (rel_path, html_content, found) tuple.
+    """
+    full_path = repo_path / rel_path
+    if full_path.exists():
+        try:
+            content = full_path.read_text()
+            html = md_to_html(content)
+            return (rel_path, html, True)
+        except Exception:
+            return (rel_path, '', False)
+    return (rel_path, '', False)
+
+
+def extract_doc_title(content):
+    """Extract the first H1 heading from markdown content."""
+    for line in content.split('\n'):
+        if line.startswith('# '):
+            return line[2:].strip()
+    return None
+
+
+def infer_action_needed(title, labels):
+    """Infer what action the founder needs to take based on bead metadata."""
+    title_upper = title.upper()
+    if 'REVIEW' in title_upper:
+        return 'Review and provide feedback'
+    if 'APPROVE' in title_upper:
+        return 'Review and approve'
+    if 'SIGN' in title_upper:
+        return 'Review and sign'
+    if any(l in ('counsel',) for l in labels):
+        return 'Review with Counsel'
+    return 'Review'
+
+
+def infer_agent(labels, title):
+    """Infer the producing agent from labels or title."""
+    title_lower = title.lower()
+    for agent in ['ceo', 'cfo', 'counsel', 'cpeo', 'cio', 'strategist', 'marketing']:
+        if agent in [l.lower() for l in labels]:
+            return agent
+        if title_lower.startswith(f'{agent}:') or title_lower.startswith(f'{agent.upper()}:'):
+            return agent
+    # Check title for agent prefixes like "CPEO:" "CEO:" etc.
+    m = re.match(r'^(\w+):', title)
+    if m:
+        prefix = m.group(1).lower()
+        if prefix in ('ceo', 'cfo', 'counsel', 'cpeo', 'cio', 'strategist', 'marketing'):
+            return prefix
+    return None
+
+
+# ── HTML Helpers ──
+
+def h(text):
+    """HTML-escape."""
+    return str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+
+
+def priority_class(p):
+    """CSS class for priority."""
+    p = int(p) if p is not None else 99
+    if p == 0: return 'p0'
+    if p == 1: return 'p1'
+    if p == 2: return 'p2'
+    return 'p3'
+
+
+def priority_label(p):
+    """Display label for priority."""
+    p = int(p) if p is not None else 99
+    return f'P{p}'
+
+
+def urgency_label(p):
+    """Map priority to human-readable urgency language."""
+    p = int(p) if p is not None else 99
+    mapping = {0: 'Immediate', 1: 'This week', 2: 'This month', 3: 'When available'}
+    return mapping.get(p, 'When available')
+
+
+# Labels that indicate a role
+ROLE_LABELS = {
+    'principal', 'it-operator', 'business-admin', 'account-manager',
+    'counsel', 'cio', 'marketing', 'strategist', 'cfo', 'ceo', 'cpeo',
+}
+
+# Labels to exclude from role badge display
+EXCLUDE_LABELS = {'staff-queue'}
+
+
+# ── Data Assembly ──
+
+def collect_data():
+    """Collect all dashboard data from repos.
+
+    Splits items into:
+    - review_queue: items with linked documents (deliverables to READ)
+    - staff_tasks: items without documents (things to DO)
+    - standalone_reviews: docs that exist on disk without a bead reference
+    """
+    project_summaries = []
+    all_beads = {}
+
+    for name, path in PROJECTS.items():
+        if not path.exists():
+            project_summaries.append({
+                'name': name, 'open': 0, 'high_pri': 0, 'signals': 0, 'exists': False
+            })
+            continue
+
+        beads = get_beads(path)
+        all_beads[name] = beads
+        open_beads = [b for b in beads if b.get('status') == 'open']
+        high_pri = [b for b in open_beads if b.get('priority', 99) <= 1]
+        signals = [b for b in open_beads if b.get('title', '').startswith('STAFF-SIGNAL:')]
+
+        project_summaries.append({
+            'name': name, 'open': len(open_beads), 'high_pri': len(high_pri),
+            'signals': len(signals), 'exists': True
+        })
+
+    # Build bead ID maps
+    bead_title_map = {}
+    bead_status_map = {}
+    for name, beads in all_beads.items():
+        for b in beads:
+            bead_title_map[b['id']] = b.get('title', b['id'])
+            bead_status_map[b['id']] = b.get('status', 'unknown')
+
+    # Categorize org repo beads into review queue vs staff tasks
+    review_queue = []     # Items with deliverables to READ
+    staff_tasks = []      # Items to DO (no attached documents)
+    seen_artifact_paths = set()  # Track which artifact paths are covered by beads
+
+    org_repo_path = PROJECTS.get(ORG_REPO_NAME)
+    if org_repo_path is None:
+        print(f'Warning: org_repo "{ORG_REPO_NAME}" not found in projects config', file=sys.stderr)
+        org_repo_path = Path('.')
+
+    for b in all_beads.get(ORG_REPO_NAME, []):
+        if b.get('status') != 'open':
+            continue
+        title = b.get('title', '')
+        title_upper = title.upper()
+        labels = b.get('labels') or []
+        desc = b.get('description', '')
+
+        # Is this a staff/review item?
+        is_staff = (title.startswith('STAFF:') or title.startswith('STAFF-SIGNAL:')
+                     or 'staff-queue' in labels)
+        is_review = any(kw in title_upper for kw in ['REVIEW', 'APPROVE', 'SIGN'])
+
+        if not is_staff and not is_review:
+            continue
+
+        role_labels = [l for l in labels if l not in EXCLUDE_LABELS]
+
+        # Detect linked artifacts
+        artifact_paths = detect_artifact_paths(desc)
+        artifacts = []
+        for rel_path in artifact_paths:
+            _, content, found = read_artifact(org_repo_path, rel_path)
+            if found:
+                artifacts.append({
+                    'path': rel_path,
+                    'content': content,
+                    'title': extract_doc_title(content) or rel_path.split('/')[-1],
+                })
+                seen_artifact_paths.add(rel_path)
+
+        item = {
+            'id': b['id'],
+            'title': title,
+            'priority': b.get('priority', 99),
+            'description': extract_desc_preview(desc),
+            'full_description': desc,
+            'estimate': extract_estimate(desc),
+            'created': b.get('created_at', b.get('created', 'unknown'))[:10],
+            'updated': (b.get('updated_at', b.get('updated', ''))[:10]
+                        if b.get('updated_at', b.get('updated', '')) else ''),
+            'labels': role_labels,
+            'all_labels': labels,
+            'owner': b.get('owner') or b.get('assignee'),
+            'status': b.get('status', 'open'),
+            'artifacts': artifacts,
+            'action': infer_action_needed(title, role_labels),
+            'agent': infer_agent(role_labels, title),
+        }
+
+        if artifacts:
+            # Has deliverables -> review queue
+            item['section'] = 'Review Queue'
+            review_queue.append(item)
+        elif is_review:
+            # Review bead without artifacts -> still review queue (metadata only)
+            item['section'] = 'Review Queue'
+            review_queue.append(item)
+        else:
+            # Staff task without documents -> task queue
+            item['section'] = 'Staff Tasks'
+            staff_tasks.append(item)
+
+    review_queue.sort(key=lambda x: (int(x['priority']), x['created']))
+    staff_tasks.sort(key=lambda x: (int(x['priority']), x['created']))
+
+    # Standalone review docs -- files on disk that should surface as review items
+    # even without a bead explicitly referencing them
+    standalone_reviews = []
+    for doc_info in STANDALONE_REVIEW_DOCS:
+        rel_path = doc_info['path']
+        if rel_path in seen_artifact_paths:
+            continue  # Already covered by a bead
+        full_path = org_repo_path / rel_path
+        if not full_path.exists():
+            continue
+        content = full_path.read_text()
+        doc_title = extract_doc_title(content) or rel_path.split('/')[-1]
+        standalone_reviews.append({
+            'path': rel_path,
+            'content': content,
+            'title': doc_title,
+            'action': doc_info.get('action', 'Review'),
+            'agent': doc_info.get('agent'),
+            'priority': 1,  # Architecture docs are high priority
+        })
+
+    exec_entries = get_exec_log_entries(org_repo_path)
+
+    return {
+        'review_queue': review_queue,
+        'staff_tasks': staff_tasks,
+        'standalone_reviews': standalone_reviews,
+        'projects': project_summaries,
+        'exec_entries': exec_entries,
+        'bead_title_map': bead_title_map,
+        'bead_status_map': bead_status_map,
+    }
+
+
+# ── HTML Generation: Review Queue ──
+
+def render_review_item(item):
+    """Render a review queue item with inline artifact previews."""
+    pc = priority_class(item['priority'])
+    pl = priority_label(item['priority'])
+    ul = urgency_label(item['priority'])
+
+    # Agent badge
+    agent = item.get('agent')
+    agent_badge = ''
+    if agent:
+        agent_badge = f'<span class="badge badge-agent">From: {h(agent.upper())}</span>'
+
+    # Action badge
+    action = item.get('action', 'Review')
+    action_badge = f'<span class="badge badge-action">{h(action)}</span>'
+
+    # Role badges
+    role_badges_html = ''
+    labels = item.get('labels', [])
+    if labels:
+        badges = ''.join(f'<span class="badge badge-role">{h(l)}</span>' for l in labels)
+        role_badges_html = f'<div class="card-badges">{badges}</div>'
+
+    # Artifact previews -- the actual deliverables rendered inline
+    artifacts_html = ''
+    artifacts = item.get('artifacts', [])
+    if artifacts:
+        artifact_parts = []
+        for art in artifacts:
+            preview_html = render_artifact_preview(art['content'], max_chars=600)
+            art_title = h(art.get('title', art['path']))
+            art_path = h(art['path'])
+            artifact_parts.append(f'''<div class="review-artifact">
+      <div class="review-artifact-header">
+        <span class="review-artifact-title">{art_title}</span>
+        <span class="review-artifact-path">{art_path}</span>
+      </div>
+      <div class="review-artifact-content">{preview_html}</div>
+      <div class="review-artifact-fade"></div>
+      <a href="bead/{h(item["id"])}.html" class="review-artifact-continue">Continue reading &rarr;</a>
+    </div>''')
+        artifacts_html = '\n'.join(artifact_parts)
+    else:
+        # No artifacts -- show description preview
+        if item['description']:
+            desc_lines = item['description'].split('\n')
+            desc_inner = '<br>'.join(h(line) for line in desc_lines)
+            artifacts_html = f'<div class="card-desc">{desc_inner}</div>'
+
+    return f'''<div class="review-card {pc}">
+  <div class="review-header">
+    <div class="review-title-row">
+      <a href="bead/{h(item["id"])}.html" class="review-title">{h(item["title"])}</a>
+      <span class="badge badge-{pc}">{pl}</span>
+      <span class="badge badge-urgency badge-urgency-{pc}">{h(ul)}</span>
+    </div>
+    <div class="review-meta-row">
+      {action_badge}
+      {agent_badge}
+      {role_badges_html}
+    </div>
+  </div>
+  {artifacts_html}
+  <div class="review-footer">
+    <span class="card-id">{h(item["id"])} &middot; created {h(item["created"])}</span>
+    <a href="bead/{h(item["id"])}.html" class="review-detail-link">Full details &rarr;</a>
+  </div>
+</div>'''
+
+
+def render_standalone_review(doc):
+    """Render a standalone document review item (no bead)."""
+    pc = priority_class(doc['priority'])
+    pl = priority_label(doc['priority'])
+    ul = urgency_label(doc['priority'])
+
+    agent = doc.get('agent')
+    agent_badge = ''
+    if agent:
+        agent_badge = f'<span class="badge badge-agent">From: {h(agent.upper())}</span>'
+
+    action_badge = f'<span class="badge badge-action">{h(doc.get("action", "Review"))}</span>'
+
+    preview_html = render_artifact_preview(doc['content'], max_chars=600)
+    doc_title = h(doc['title'])
+    doc_path = h(doc['path'])
+
+    # Generate a slug for detail page linking
+    slug = doc['path'].replace('/', '-').replace('.md', '')
+
+    return f'''<div class="review-card {pc}">
+  <div class="review-header">
+    <div class="review-title-row">
+      <span class="review-title">{doc_title}</span>
+      <span class="badge badge-{pc}">{pl}</span>
+      <span class="badge badge-urgency badge-urgency-{pc}">{h(ul)}</span>
+    </div>
+    <div class="review-meta-row">
+      {action_badge}
+      {agent_badge}
+    </div>
+  </div>
+  <div class="review-artifact">
+    <div class="review-artifact-header">
+      <span class="review-artifact-path">{doc_path}</span>
+    </div>
+    <div class="review-artifact-content">{preview_html}</div>
+    <div class="review-artifact-fade"></div>
+    <a href="doc/{h(slug)}.html" class="review-artifact-continue">Continue reading &rarr;</a>
+  </div>
+</div>'''
+
+
+# ── HTML Generation: Staff Tasks ──
+
+def render_task_card(item):
+    """Render a compact staff task card (non-document action items)."""
+    pc = priority_class(item['priority'])
+    pl = priority_label(item['priority'])
+    ul = urgency_label(item['priority'])
+    est = item.get('estimate', '')
+    est_badge = ''
+    if est:
+        est_badge = f'<span class="badge badge-estimate">{h(est)}</span>'
+
+    urgency_badge = f'<span class="badge badge-urgency badge-urgency-{pc}">{h(ul)}</span>'
+
+    # Role badges
+    role_badges = ''
+    labels = item.get('labels', [])
+    if labels:
+        badges = ''.join(f'<span class="badge badge-role">{h(l)}</span>' for l in labels)
+        role_badges = badges
+
+    # Compact description -- one line
+    desc_html = ''
+    if item['description']:
+        first_line = item['description'].split('\n')[0]
+        if len(first_line) > 120:
+            first_line = first_line[:120] + '...'
+        desc_html = f'<div class="task-desc">{h(first_line)}</div>'
+
+    return f'''<a href="bead/{h(item["id"])}.html" class="card-link"><div class="task-card {pc}">
+  <div class="task-header">
+    <span class="badge badge-{pc}">{pl}</span>
+    {urgency_badge}
+    {est_badge}
+    {role_badges}
+  </div>
+  <div class="task-title">{h(item["title"])}</div>
+  {desc_html}
+  <div class="task-meta">
+    <span class="card-id">{h(item["id"])}</span>
+  </div>
+</div></a>'''
+
+
+# ── HTML Generation: Exec Digest ──
+
+def render_digest_entry(entry):
+    """Render an exec log digest entry with link to detail page."""
+    slug = entry['rel_path'].replace('/', '-').replace('.md', '')
+    return f'''<a href="doc/{h(slug)}.html" class="digest-link"><div class="digest-entry">
+  <div class="digest-meta">
+    <span class="digest-agent">{h(entry["agent"])}</span>
+    <span class="digest-date">{h(entry["date"])}</span>
+  </div>
+  <div class="digest-title">{h(entry["title"])}</div>
+  <div class="digest-preview">{h(entry["preview"])}</div>
+</div></a>'''
+
+
+# ── HTML Generation: Project Cards ──
+
+def render_project_card(proj):
+    """Render a project status card."""
+    if not proj['exists']:
+        return f'''<div class="project-card inactive">
+  <div class="project-name">{h(proj["name"])}</div>
+  <div class="project-stats"><span class="project-stat" style="font-style:italic">Not initialized</span></div>
+</div>'''
+    hp_class = ' alert' if proj['high_pri'] > 0 else ''
+    sig_line = ''
+    if proj['signals'] > 0:
+        sig_line = f'<div class="project-stat"><span>Signals</span><span class="val alert">{proj["signals"]}</span></div>'
+    return f'''<div class="project-card">
+  <div class="project-name">{h(proj["name"])}</div>
+  <div class="project-stats">
+    <div class="project-stat"><span>Open</span><span class="val">{proj["open"]}</span></div>
+    <div class="project-stat"><span>P0/P1</span><span class="val{hp_class}">{proj["high_pri"]}</span></div>
+    {sig_line}
+  </div>
+</div>'''
+
+
+# ── Main Page Generation ──
+
+def generate_html(data, timestamp):
+    """Generate the complete dashboard HTML."""
+    total_reviews = len(data['review_queue']) + len(data['standalone_reviews'])
+    total_tasks = len(data['staff_tasks'])
+    urgent_reviews = len([r for r in data['review_queue'] if int(r['priority']) <= 1])
+    urgent_tasks = len([t for t in data['staff_tasks'] if int(t['priority']) <= 1])
+    total_projects = len([p for p in data['projects'] if p['exists']])
+
+    # Section 1: Review Queue
+    review_parts = []
+    for item in data['review_queue']:
+        review_parts.append(render_review_item(item))
+    for doc in data['standalone_reviews']:
+        review_parts.append(render_standalone_review(doc))
+
+    if review_parts:
+        review_section = '<div class="review-queue">' + '\n'.join(review_parts) + '</div>'
+    else:
+        review_section = '<div class="empty-state">No deliverables awaiting review.</div>'
+
+    # Section 2: Staff Tasks
+    if data['staff_tasks']:
+        task_cards = '\n'.join(render_task_card(t) for t in data['staff_tasks'])
+        tasks_section = f'<div class="task-grid">{task_cards}</div>'
+    else:
+        tasks_section = '<div class="empty-state">No pending staff tasks.</div>'
+
+    # Section 3: AI Team Activity (exec digest)
+    if data['exec_entries']:
+        digest_entries = '\n'.join(render_digest_entry(e) for e in data['exec_entries'])
+        digest_section = f'<div class="digest-list">{digest_entries}</div>'
+    else:
+        digest_section = '<div class="empty-state">No exec log entries yet.</div>'
+
+    # Section 4: Portfolio Status
+    project_cards = '\n'.join(render_project_card(p) for p in data['projects'])
+
+    return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3DL Executive Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="detail.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container">
+      <div class="nav-inner">
+        <span class="nav-logo">3DL Dashboard</span>
+        <ul class="nav-links">
+          <li><a href="#review-queue">Review Queue</a></li>
+          <li><a href="#staff-tasks">Staff Tasks</a></li>
+          <li><a href="#team-activity">Team Activity</a></li>
+          <li><a href="#portfolio">Portfolio</a></li>
+        </ul>
+        <span class="nav-timestamp">Updated {h(timestamp)}</span>
+      </div>
+    </div>
+  </nav>
+
+  <header class="dash-header">
+    <div class="container">
+      <h1>Executive <span>Dashboard</span></h1>
+      <p class="dash-subtitle">Deliverables to review, tasks to complete, and team activity.</p>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="summary-bar">
+      <div class="summary-stat">
+        <span class="stat-value{' urgent' if urgent_reviews > 0 else ''}">{total_reviews}</span>
+        <span class="stat-label">To Review</span>
+      </div>
+      <div class="summary-stat">
+        <span class="stat-value{' urgent' if urgent_tasks > 0 else ''}">{total_tasks}</span>
+        <span class="stat-label">Tasks</span>
+      </div>
+      <div class="summary-stat">
+        <span class="stat-value">{len(data['exec_entries'])}</span>
+        <span class="stat-label">Team Updates</span>
+      </div>
+      <div class="summary-stat">
+        <span class="stat-value">{total_projects}</span>
+        <span class="stat-label">Projects</span>
+      </div>
+    </div>
+  </div>
+
+  <section class="section" id="review-queue">
+    <div class="container">
+      <div class="section-label">Read &amp; Decide</div>
+      <h2 class="section-title">Your Review Queue</h2>
+      <p class="section-desc">Documents and deliverables from the AI team that need your eyes. Read the content, then approve, provide feedback, or request changes.</p>
+      {review_section}
+    </div>
+  </section>
+
+  <section class="section" id="staff-tasks">
+    <div class="container">
+      <div class="section-label">Do</div>
+      <h2 class="section-title">Staff Tasks</h2>
+      <p class="section-desc">Actions that require a human: configure services, file paperwork, make calls, sign documents.</p>
+      {tasks_section}
+    </div>
+  </section>
+
+  <section class="section" id="team-activity">
+    <div class="container">
+      <div class="section-label">Your Team</div>
+      <h2 class="section-title">AI Team Activity</h2>
+      <p class="section-desc">Recent work products from the executive team. Click to read the full document.</p>
+      {digest_section}
+    </div>
+  </section>
+
+  <section class="section" id="portfolio">
+    <div class="container">
+      <div class="section-label">Portfolio</div>
+      <h2 class="section-title">Project Status</h2>
+      <div class="project-grid">{project_cards}</div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <span class="footer-logo">Third Division Labs</span>
+        <span>Generated by render-dashboard &middot; {h(timestamp)}</span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>'''
+
+
+# ── Detail Page Generation ──
+
+def render_dep_link(bead_id, title_map, status_map):
+    """Render a dependency as a clickable link."""
+    title = title_map.get(bead_id, bead_id)
+    status = status_map.get(bead_id, 'unknown')
+    status_class = status.replace(' ', '_')
+    if '/' in bead_id:
+        return f'''<li><span class="dep-id">{h(bead_id)}</span>{h(title)}</li>'''
+    return f'''<li><a href="{h(bead_id)}.html"><span class="dep-id">{h(bead_id)}</span>{h(title)}<span class="dep-status {h(status_class)}">{h(status)}</span></a></li>'''
+
+
+def generate_detail_page(bead_item, detail_data, timestamp, title_map, status_map):
+    """Generate HTML for a single bead detail page."""
+    bead_id = bead_item['id']
+    title = bead_item['title']
+    priority = bead_item.get('priority', 99)
+    status = bead_item.get('status', 'open')
+    section = bead_item.get('section', 'Beads')
+    created = bead_item.get('created', '')
+    updated = bead_item.get('updated', '')
+    owner = bead_item.get('owner')
+    labels = bead_item.get('all_labels', bead_item.get('labels', []))
+
+    pc = priority_class(priority)
+    pl = priority_label(priority)
+
+    status_badge_class = 'badge-status'
+    if status == 'closed':
+        status_badge_class = 'badge-status badge-status-closed'
+    elif status == 'in_progress':
+        status_badge_class = 'badge-status badge-status-in_progress'
+
+    label_badges = ''
+    if labels:
+        for l in labels:
+            if l not in EXCLUDE_LABELS:
+                label_badges += f'<span class="badge badge-role">{h(l)}</span>'
+
+    stats_parts = []
+    if created:
+        stats_parts.append(f'<span><span class="detail-stat-label">Created</span> <span class="detail-stat-value">{h(created)}</span></span>')
+    if updated and updated != created:
+        stats_parts.append(f'<span><span class="detail-stat-label">Updated</span> <span class="detail-stat-value">{h(updated)}</span></span>')
+    if owner:
+        stats_parts.append(f'<span><span class="detail-stat-label">Owner</span> <span class="detail-stat-value">{h(owner)}</span></span>')
+    stats_html = '\n      '.join(stats_parts)
+
+    full_desc = bead_item.get('full_description', '')
+    desc_html = md_to_html(full_desc) if full_desc else '<p>No description.</p>'
+
+    # Dependencies
+    deps_html = ''
+    if detail_data:
+        dependents = detail_data.get('dependents', [])
+        dependencies = detail_data.get('dependencies', [])
+
+        blocks_items = []
+        blocked_by_items = []
+
+        for dep in dependents:
+            dep_id = dep.get('id', '')
+            if dep_id:
+                title_map[dep_id] = dep.get('title', dep_id)
+                status_map[dep_id] = dep.get('status', 'unknown')
+                blocks_items.append(render_dep_link(dep_id, title_map, status_map))
+
+        for dep in dependencies:
+            dep_id = dep.get('id', dep.get('depends_on_id', ''))
+            if dep_id:
+                if dep.get('title'):
+                    title_map[dep_id] = dep['title']
+                if dep.get('status'):
+                    status_map[dep_id] = dep['status']
+                blocked_by_items.append(render_dep_link(dep_id, title_map, status_map))
+
+        if blocks_items or blocked_by_items:
+            deps_inner = ''
+            if blocks_items:
+                deps_inner += f'''<div class="dep-group">
+        <h3>Blocks</h3>
+        <ul>{''.join(blocks_items)}</ul>
+      </div>'''
+            if blocked_by_items:
+                deps_inner += f'''<div class="dep-group">
+        <h3>Blocked By</h3>
+        <ul>{''.join(blocked_by_items)}</ul>
+      </div>'''
+            deps_html = f'''<section class="detail-section">
+      <h2>Dependencies</h2>
+      <div class="dep-list">
+      {deps_inner}
+      </div>
+    </section>'''
+
+    # Linked artifacts -- render FULL content on detail pages
+    org_repo_path = PROJECTS.get(ORG_REPO_NAME, Path('.'))
+    artifact_paths = detect_artifact_paths(full_desc)
+    artifacts_html = ''
+    if artifact_paths:
+        artifact_sections = []
+        for rel_path in artifact_paths:
+            filename, content_html, found = render_artifact_full(org_repo_path, rel_path)
+            if found:
+                artifact_sections.append(f'''<details class="artifact" open>
+        <summary>{h(filename)}</summary>
+        <div class="artifact-content">{content_html}</div>
+      </details>''')
+            else:
+                artifact_sections.append(f'''<div class="artifact-not-found">Artifact not found: {h(filename)}</div>''')
+        if artifact_sections:
+            artifacts_html = f'''<section class="detail-section">
+      <h2>Linked Documents</h2>
+      {''.join(artifact_sections)}
+    </section>'''
+
+    return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{h(bead_id)} | 3DL Dashboard</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="../detail.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container">
+      <div class="nav-detail">
+        <a href="../index.html" class="nav-back">&larr; Back to Dashboard</a>
+        <span class="nav-bead-id">{h(bead_id)}</span>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container detail-container">
+    <div class="breadcrumb">
+      <a href="../index.html">Dashboard</a><span class="sep">&rsaquo;</span><a href="../index.html#{h(section.lower().replace(' ', '-'))}">{h(section)}</a><span class="sep">&rsaquo;</span>{h(bead_id)}
+    </div>
+
+    <header class="detail-header">
+      <div class="detail-meta">
+        <span class="badge badge-{pc}">{pl}</span>
+        <span class="badge {status_badge_class}">{h(status.upper())}</span>
+        {label_badges}
+      </div>
+      <h1 class="detail-title">{h(title)}</h1>
+      <div class="detail-stats">
+        {stats_html}
+      </div>
+    </header>
+
+    <section class="detail-section">
+      <h2>Description</h2>
+      <div class="detail-description">{desc_html}</div>
+    </section>
+
+    {deps_html}
+
+    {artifacts_html}
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <span class="footer-logo">Third Division Labs</span>
+        <span>Generated by render-dashboard &middot; {h(timestamp)}</span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>'''
+
+
+def generate_doc_page(rel_path, content, timestamp):
+    """Generate a full-document detail page for standalone docs and exec log entries."""
+    title = extract_doc_title(content) or rel_path.split('/')[-1]
+    content_html = md_to_html(content)
+    slug = rel_path.replace('/', '-').replace('.md', '')
+
+    return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{h(title)} | 3DL Dashboard</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="../detail.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="container">
+      <div class="nav-detail">
+        <a href="../index.html" class="nav-back">&larr; Back to Dashboard</a>
+        <span class="nav-bead-id">{h(rel_path)}</span>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container detail-container">
+    <div class="breadcrumb">
+      <a href="../index.html">Dashboard</a><span class="sep">&rsaquo;</span>{h(rel_path)}
+    </div>
+
+    <header class="detail-header">
+      <h1 class="detail-title">{h(title)}</h1>
+      <div class="detail-stats">
+        <span><span class="detail-stat-label">File</span> <span class="detail-stat-value">{h(rel_path)}</span></span>
+      </div>
+    </header>
+
+    <section class="detail-section">
+      <div class="detail-description">{content_html}</div>
+    </section>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <span class="footer-logo">Third Division Labs</span>
+        <span>Generated by render-dashboard &middot; {h(timestamp)}</span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>'''
+
+
+def generate_detail_pages(data, timestamp):
+    """Generate detail pages for all items on the dashboard."""
+    bead_dir = DASHBOARD_REPO / 'bead'
+    bead_dir.mkdir(exist_ok=True)
+    doc_dir = DASHBOARD_REPO / 'doc'
+    doc_dir.mkdir(exist_ok=True)
+
+    title_map = data['bead_title_map']
+    status_map = data['bead_status_map']
+
+    org_repo_path = PROJECTS.get(ORG_REPO_NAME, Path('.'))
+
+    # Bead detail pages
+    detail_beads = []
+    for item in data['review_queue']:
+        detail_beads.append(item)
+    for item in data['staff_tasks']:
+        detail_beads.append(item)
+
+    seen_ids = set()
+    unique_beads = []
+    for item in detail_beads:
+        if item['id'] not in seen_ids:
+            seen_ids.add(item['id'])
+            unique_beads.append(item)
+
+    generated_bead_ids = set()
+    for item in unique_beads:
+        bead_id = item['id']
+        detail_data = get_bead_detail(org_repo_path, bead_id)
+        html = generate_detail_page(item, detail_data, timestamp, title_map, status_map)
+        out_path = bead_dir / f'{bead_id}.html'
+        out_path.write_text(html)
+        generated_bead_ids.add(bead_id)
+
+    # Clean stale bead detail pages
+    for existing in bead_dir.glob('*.html'):
+        bead_id = existing.stem
+        if bead_id not in generated_bead_ids:
+            existing.unlink()
+
+    # Doc detail pages: standalone reviews + exec log entries
+    generated_doc_slugs = set()
+
+    for doc in data['standalone_reviews']:
+        slug = doc['path'].replace('/', '-').replace('.md', '')
+        html = generate_doc_page(doc['path'], doc['content'], timestamp)
+        out_path = doc_dir / f'{slug}.html'
+        out_path.write_text(html)
+        generated_doc_slugs.add(slug)
+
+    for entry in data['exec_entries']:
+        slug = entry['rel_path'].replace('/', '-').replace('.md', '')
+        html = generate_doc_page(entry['rel_path'], entry['full_content'], timestamp)
+        out_path = doc_dir / f'{slug}.html'
+        out_path.write_text(html)
+        generated_doc_slugs.add(slug)
+
+    # Clean stale doc detail pages
+    for existing in doc_dir.glob('*.html'):
+        slug = existing.stem
+        if slug not in generated_doc_slugs:
+            existing.unlink()
+
+    return len(generated_bead_ids), len(generated_doc_slugs)
+
+
+def copy_css_templates():
+    """Copy CSS templates from the web directory to the dashboard repo."""
+    script_dir = Path(__file__).resolve().parent
+    for css_file in ['style.css', 'detail.css']:
+        src = script_dir / css_file
+        if src.exists():
+            dst = DASHBOARD_REPO / css_file
+            shutil.copy2(str(src), str(dst))
+
+
+# ── Main ──
+
+def main():
+    global PROJECTS, DASHBOARD_REPO, ORG_REPO_NAME, BD, STANDALONE_REVIEW_DOCS
+
+    config_path = find_config()
+    config = load_config(config_path)
+    PROJECTS, DASHBOARD_REPO, ORG_REPO_NAME, STANDALONE_REVIEW_DOCS = resolve_config(config)
+    BD = find_bd()
+
+    print(f'Config: {config_path}')
+    print(f'BD: {BD}')
+    print(f'Org repo: {ORG_REPO_NAME} -> {PROJECTS.get(ORG_REPO_NAME, "NOT FOUND")}')
+    print(f'Dashboard: {DASHBOARD_REPO}')
+    print(f'Projects: {", ".join(PROJECTS.keys())}')
+
+    print('Collecting data from project repos...')
+    data = collect_data()
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+    print('Copying CSS templates...')
+    copy_css_templates()
+
+    print('Rendering dashboard...')
+    html = generate_html(data, timestamp)
+
+    out_path = DASHBOARD_REPO / 'index.html'
+    out_path.write_text(html)
+
+    print('Generating detail pages...')
+    bead_count, doc_count = generate_detail_pages(data, timestamp)
+
+    print(f'Dashboard written to {out_path}')
+    print(f'  Review queue: {len(data["review_queue"])} items ({sum(len(r.get("artifacts",[])) for r in data["review_queue"])} with artifacts)')
+    print(f'  Standalone:   {len(data["standalone_reviews"])} doc reviews')
+    print(f'  Staff tasks:  {len(data["staff_tasks"])} items')
+    print(f'  Team updates: {len(data["exec_entries"])} entries')
+    print(f'  Projects:     {len([p for p in data["projects"] if p["exists"]])} active')
+    print(f'  Detail pages: {bead_count} bead + {doc_count} doc')
+
+    # Commit
+    subprocess.run(['git', 'add', 'index.html', 'style.css', 'detail.css', 'bead/', 'doc/'], cwd=str(DASHBOARD_REPO))
+    result = subprocess.run(
+        ['git', 'commit', '-m', f'Dashboard update: {timestamp}'],
+        cwd=str(DASHBOARD_REPO), capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        print('Committed.')
+    else:
+        print('Nothing to commit (no changes).')
+
+    if '--push' in sys.argv:
+        subprocess.run(['git', 'push'], cwd=str(DASHBOARD_REPO))
+        print('Pushed to remote.')
+
+
+if __name__ == '__main__':
+    main()
