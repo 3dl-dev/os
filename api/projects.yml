@@ -1,0 +1,17 @@
+# Project registry for the Atom API.
+# Each entry maps a project name to its filesystem path and bead prefix.
+# Paths are relative to PROJECTS_BASE (default: /home/baron/projects).
+
+projects:
+  os:
+    prefix: os
+  3dl:
+    prefix: 3dl
+  website:
+    prefix: website
+  mag-shield:
+    prefix: mag-shield
+  galtrader:
+    prefix: galtrader
+  vms:
+    prefix: vms

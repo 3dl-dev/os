@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+TOOLS_DIR="$(cd "$(dirname "$REAL_SCRIPT")/.." && pwd)"
+
+export TOOLS_DIR
+export PROJECTS_BASE="${PROJECTS_BASE:-/home/baron/projects}"
+
+case "${1:-start}" in
+  start)
+    exec docker compose \
+      -f "$TOOLS_DIR/docker/docker-compose.yml" \
+      -p atom-api \
+      up -d api
+    ;;
+  stop)
+    exec docker compose \
+      -f "$TOOLS_DIR/docker/docker-compose.yml" \
+      -p atom-api \
+      down api
+    ;;
+  logs)
+    exec docker compose \
+      -f "$TOOLS_DIR/docker/docker-compose.yml" \
+      -p atom-api \
+      logs -f api
+    ;;
+  restart)
+    docker compose \
+      -f "$TOOLS_DIR/docker/docker-compose.yml" \
+      -p atom-api \
+      down api 2>/dev/null || true
+    exec docker compose \
+      -f "$TOOLS_DIR/docker/docker-compose.yml" \
+      -p atom-api \
+      up -d api
+    ;;
+  status)
+    exec docker compose \
+      -f "$TOOLS_DIR/docker/docker-compose.yml" \
+      -p atom-api \
+      ps api
+    ;;
+  *)
+    echo "Usage: atom-api {start|stop|logs|restart|status}" >&2
+    exit 1
+    ;;
+esac

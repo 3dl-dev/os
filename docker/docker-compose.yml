@@ -21,3 +21,20 @@ services:
     environment:
       - HOME=/home/ghuser
     working_dir: /workspace
+
+  api:
+    image: baron-os/api
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    user: "${UID:-1000}:${GID:-1000}"
+    ports:
+      - "${ATOM_API_PORT:-3131}:3131"
+    volumes:
+      - ${TOOLS_DIR:-.}/api:/app:ro
+      - ${PROJECTS_BASE:-/home/baron/projects}:/projects
+    environment:
+      - PROJECTS_BASE=/projects
+      - ATOM_API_TOKEN=${ATOM_API_TOKEN:-}
+      - ATOM_API_PORT=3131
+    working_dir: /app
