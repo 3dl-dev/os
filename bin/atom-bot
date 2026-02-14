@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Atom Teams Bot wrapper — runs the bot server.
+# Usage: atom-bot start|stop|status
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+BOT_DIR="$REPO_ROOT/bot"
+PID_FILE="$BOT_DIR/.bot.pid"
+
+# Load .env if present
+if [ -f "$REPO_ROOT/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/.env"
+    set +a
+fi
+
+cmd="${1:-start}"
+
+case "$cmd" in
+    start)
+        if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+            echo "Bot already running (PID $(cat "$PID_FILE"))"
+            exit 0
+        fi
+        echo "Starting Atom Teams Bot..."
+        cd "$BOT_DIR"
+        nohup python3 app.py > "$BOT_DIR/bot.log" 2>&1 &
+        echo $! > "$PID_FILE"
+        echo "Bot started (PID $!, port ${BOT_PORT:-3978})"
+        echo "Logs: $BOT_DIR/bot.log"
+        ;;
+    stop)
+        if [ -f "$PID_FILE" ]; then
+            pid=$(cat "$PID_FILE")
+            if kill -0 "$pid" 2>/dev/null; then
+                kill "$pid"
+                echo "Bot stopped (PID $pid)"
+            else
+                echo "Bot not running (stale PID file)"
+            fi
+            rm -f "$PID_FILE"
+        else
+            echo "Bot not running"
+        fi
+        ;;
+    status)
+        if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+            echo "Bot running (PID $(cat "$PID_FILE"))"
+        else
+            echo "Bot not running"
+        fi
+        ;;
+    *)
+        echo "Usage: atom-bot start|stop|status"
+        exit 1
+        ;;
+esac

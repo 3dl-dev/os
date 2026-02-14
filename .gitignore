@@ -2,3 +2,9 @@
 .env.*
 *.pem
 *.key
+
+# Bot runtime
+bot/.bot.pid
+bot/bot.log
+bot/__pycache__/
+__pycache__/

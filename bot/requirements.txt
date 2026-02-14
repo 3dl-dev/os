@@ -1,0 +1,4 @@
+botbuilder-core>=4.16.1,<5
+botbuilder-integration-aiohttp>=4.16.1,<5
+botframework-connector>=4.16.1,<5
+aiohttp>=3.9,<4
