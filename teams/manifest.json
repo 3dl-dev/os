@@ -1,7 +1,7 @@
 {
   "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
   "manifestVersion": "1.17",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "id": "feccdf4f-de6a-4a38-b8c0-ea1487c2cf93",
   "developer": {
     "name": "Third Division Labs",
