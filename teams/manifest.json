@@ -1,0 +1,47 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "0.1.0",
+  "id": "feccdf4f-de6a-4a38-b8c0-ea1487c2cf93",
+  "developer": {
+    "name": "Third Division Labs",
+    "websiteUrl": "https://3dl-dev.github.io/website/",
+    "privacyUrl": "https://3dl-dev.github.io/website/",
+    "termsOfUseUrl": "https://3dl-dev.github.io/website/"
+  },
+  "name": {
+    "short": "3DL OS Bot",
+    "full": "Third Division Labs OS Bot"
+  },
+  "description": {
+    "short": "AI executive team interface",
+    "full": "Staff queue, suggestions, and conversational access to the 3DL AI executive team."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#1a1a2e",
+  "bots": [
+    {
+      "botId": "feccdf4f-de6a-4a38-b8c0-ea1487c2cf93",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal", "team"],
+          "commands": [
+            { "title": "queue", "description": "Show your top staff queue items" },
+            { "title": "claim", "description": "Claim a task by ID" },
+            { "title": "done", "description": "Mark a task complete" },
+            { "title": "help", "description": "Request help on a task" },
+            { "title": "suggest", "description": "Send a suggestion to an agent" }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": ["dashboard.3dl.dev"]
+}
