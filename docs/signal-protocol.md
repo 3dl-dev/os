@@ -79,6 +79,52 @@ Field definitions:
 | `signal.routing.tier` | no | Suggested model tier (haiku/sonnet/opus) |
 | `signal.context` | no | Array of cross-repo bead refs and file paths |
 | `signal.payload` | no | Type-specific structured data (see below) |
+| `signal.snapshots` | no | By-value content frozen at signal time (see below) |
+
+### Snapshots (By-Value Context)
+
+Signals carry three layers of context:
+
+1. **payload** — inline structured data, always present, type-specific
+2. **context refs** — bead/file references for depth, receiver follows the graph
+3. **snapshots** — by-value content frozen at signal creation time
+
+Snapshots let receivers act without cloning the sender's repo. Useful when:
+- The referenced content may change between signal creation and consumption
+- The receiver doesn't have filesystem access to the sender's repo
+- The content is small enough to inline (keep under 10KB per snapshot)
+
+```json
+{
+  "signal": {
+    "snapshots": [
+      {
+        "ref": "docs/architecture.md",
+        "git_hash": "abc123f",
+        "content_type": "text/markdown",
+        "content": "# Architecture\n\n..."
+      },
+      {
+        "ref": "3dl/3dl-644",
+        "git_hash": "def456a",
+        "content_type": "application/json",
+        "content": "{\"id\":\"3dl-644\",\"title\":\"...\",\"status\":\"open\"}"
+      }
+    ]
+  }
+}
+```
+
+| Snapshot Field | Required | Description |
+|----------------|----------|-------------|
+| `ref` | yes | What this is a snapshot of (file path or bead ref) |
+| `git_hash` | yes | Git commit hash when snapshot was taken (change detection) |
+| `content_type` | no | MIME type hint (default: `text/markdown`) |
+| `content` | yes | The actual content, inline |
+
+**Change detection**: The receiver compares `git_hash` against the current HEAD of the source repo. If they differ, the snapshot may be stale — the receiver should re-fetch if possible, or note the staleness.
+
+**Size limit**: Individual snapshots should stay under 10KB. Larger content should use context refs instead, with the expectation that the receiver has filesystem access or can clone.
 
 ### Type-Specific Payloads
 
