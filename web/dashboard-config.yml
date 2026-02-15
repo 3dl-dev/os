@@ -1,0 +1,24 @@
+# 3DL Dashboard configuration
+
+projects:
+  3dl: /home/baron/projects/3dl
+  os: /home/baron/projects/os
+  website: /home/baron/projects/website
+  mag-shield: /home/baron/projects/mag-shield
+  galtrader: /home/baron/projects/galtrader
+  vms: /home/baron/projects/vms
+
+dashboard_repo: /home/baron/projects/dashboard
+
+org_repo: 3dl
+
+standalone_review_docs:
+  - path: docs/templates/msa.md
+    action: Review MSA template with Counsel
+    agent: counsel
+  - path: docs/templates/nda.md
+    action: Review NDA template with Counsel
+    agent: counsel
+  - path: docs/templates/sow.md
+    action: Review SOW template with Counsel
+    agent: counsel

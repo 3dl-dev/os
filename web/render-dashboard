@@ -533,15 +533,73 @@ def extract_doc_title(content):
 def infer_action_needed(title, labels):
     """Infer what action the founder needs to take based on bead metadata."""
     title_upper = title.upper()
-    if 'REVIEW' in title_upper:
-        return 'Review and provide feedback'
-    if 'APPROVE' in title_upper:
-        return 'Review and approve'
+    title_lower = title.lower()
     if 'SIGN' in title_upper:
-        return 'Review and sign'
+        return 'Review and sign document'
+    if 'OPERATING AGREEMENT' in title_upper:
+        return 'Read, review with spouse, sign'
+    if 'MSA' in title_upper or 'SOW' in title_upper or 'NDA' in title_upper:
+        return 'Review templates with Counsel, approve'
+    if any(kw in title_lower for kw in ['configure', 'set up', 'setup', 'register']):
+        return 'Follow instructions and complete'
+    if 'APPROVE' in title_upper:
+        return 'Read deliverable, approve or request changes'
     if any(l in ('counsel',) for l in labels):
-        return 'Review with Counsel'
-    return 'Review'
+        return 'Read, then review with Counsel'
+    if 'REVIEW' in title_upper:
+        return 'Read deliverable, provide feedback'
+    if 'capacity plan' in title_lower or 'staffing' in title_lower:
+        return 'Review plan, adjust priorities'
+    return 'Review and decide'
+
+
+# Labels indicating founder-relevant items (founder must act personally)
+FOUNDER_RELEVANT_LABELS = {
+    'principal', 'it-operator', 'business-admin', 'account-manager',
+}
+
+# Labels indicating agent-to-agent work (NOT founder's queue)
+AGENT_INTERNAL_LABELS = {
+    'cio-review', 'cpeo-review', 'cfo-review', 'strategist-review',
+    'counsel-review', 'marketing-review',
+}
+
+
+def is_founder_relevant(item):
+    """Determine if a review/task item belongs in the founder's queue.
+
+    Returns True for items the founder must personally act on.
+    Filters out agent-to-agent coordination items.
+    """
+    title = item.get('title', '')
+    labels = item.get('all_labels', item.get('labels', []))
+    title_upper = title.upper()
+
+    # STAFF items are always founder-relevant (they exist because a human is needed)
+    if title.startswith('STAFF:') or title.startswith('STAFF-SIGNAL:'):
+        return True
+    if 'staff-queue' in labels:
+        return True
+
+    # Items explicitly tagged for founder roles
+    if any(l in FOUNDER_RELEVANT_LABELS for l in labels):
+        return True
+
+    # Agent-to-agent reviews are NOT founder-relevant
+    if any(l in AGENT_INTERNAL_LABELS for l in labels):
+        return False
+
+    # Beads with "Review" from specific agents where the target is another agent
+    # Pattern: "CIO: Review..." or "CPEO: Review..." without staff-queue label
+    agent_prefixes = ('CIO:', 'CPEO:', 'CFO:', 'STRATEGIST:', 'MARKETING:')
+    if any(title_upper.startswith(p) for p in agent_prefixes):
+        # Only founder-relevant if it also mentions staff/principal/sign/approve
+        if any(kw in title_upper for kw in ['STAFF', 'PRINCIPAL', 'SIGN', 'FOUNDER']):
+            return True
+        return False
+
+    # Default: include it (conservative — don't hide things the founder might need)
+    return True
 
 
 def infer_agent(labels, title):
@@ -740,6 +798,13 @@ def collect_data():
             item['section'] = 'Staff Tasks'
             staff_tasks.append(item)
 
+    # Filter to founder-relevant items for the summary view
+    # Keep all items for detail page generation, but mark relevance
+    for item in review_queue:
+        item['founder_relevant'] = is_founder_relevant(item)
+    for item in staff_tasks:
+        item['founder_relevant'] = is_founder_relevant(item)
+
     review_queue.sort(key=_queue_sort_key)
     staff_tasks.sort(key=_queue_sort_key)
 
@@ -832,7 +897,7 @@ def render_review_item(item):
     if artifacts:
         artifact_parts = []
         for art in artifacts:
-            preview_html = render_artifact_preview(art['content'], max_chars=600)
+            preview_html = render_artifact_preview(art['content'], max_chars=150)
             art_title = h(art.get('title', art['path']))
             art_path = h(art['path'])
             artifact_parts.append(f'''<div class="review-artifact">
@@ -1028,28 +1093,63 @@ def render_project_card(proj):
 
 def generate_html(data, timestamp):
     """Generate the complete dashboard HTML."""
-    total_reviews = len(data['review_queue']) + len(data['standalone_reviews'])
-    total_tasks = len(data['staff_tasks'])
-    urgent_reviews = len([r for r in data['review_queue'] if int(r['priority']) <= 1])
-    urgent_tasks = len([t for t in data['staff_tasks'] if int(t['priority']) <= 1])
+    MAX_SUMMARY_REVIEWS = 5
+    MAX_SUMMARY_TASKS = 5
+
+    # Filter to founder-relevant items for summary display
+    founder_reviews = [r for r in data['review_queue'] if r.get('founder_relevant', True)]
+    other_reviews = [r for r in data['review_queue'] if not r.get('founder_relevant', True)]
+    founder_tasks = [t for t in data['staff_tasks'] if t.get('founder_relevant', True)]
+    other_tasks = [t for t in data['staff_tasks'] if not t.get('founder_relevant', True)]
+
+    # Split into top N and overflow
+    top_reviews = founder_reviews[:MAX_SUMMARY_REVIEWS]
+    overflow_reviews = founder_reviews[MAX_SUMMARY_REVIEWS:]
+
+    total_reviews = len(founder_reviews) + len(data['standalone_reviews'])
+    total_tasks = len(founder_tasks)
+    urgent_reviews = len([r for r in founder_reviews if int(r['priority']) <= 1])
+    urgent_tasks = len([t for t in founder_tasks if int(t['priority']) <= 1])
     total_projects = len([p for p in data['projects'] if p['exists']])
 
-    # Section 1: Review Queue
+    # Section 1: Review Queue (top N founder-relevant + standalone)
     review_parts = []
-    for item in data['review_queue']:
+    for item in top_reviews:
         review_parts.append(render_review_item(item))
     for doc in data['standalone_reviews']:
         review_parts.append(render_standalone_review(doc))
 
-    if review_parts:
-        review_section = '<div class="review-queue">' + '\n'.join(review_parts) + '</div>'
-    else:
-        review_section = '<div class="empty-state">No deliverables awaiting review.</div>'
+    overflow_html = ''
+    if overflow_reviews:
+        overflow_cards = '\n'.join(render_review_item(item) for item in overflow_reviews)
+        overflow_html = f'''<details class="overflow-section">
+      <summary class="overflow-toggle">View {len(overflow_reviews)} more review{"s" if len(overflow_reviews) != 1 else ""}</summary>
+      <div class="review-queue overflow-content">{overflow_cards}</div>
+    </details>'''
 
-    # Section 2: Staff Tasks
-    if data['staff_tasks']:
-        task_cards = '\n'.join(render_task_card(t) for t in data['staff_tasks'])
-        tasks_section = f'<div class="task-grid">{task_cards}</div>'
+    agent_internal_html = ''
+    if other_reviews:
+        agent_internal_html = f'<p class="queue-note">{len(other_reviews)} agent-to-agent review{"s" if len(other_reviews) != 1 else ""} filtered (not requiring founder action).</p>'
+
+    if review_parts:
+        review_section = '<div class="review-queue">' + '\n'.join(review_parts) + '</div>\n' + overflow_html + agent_internal_html
+    else:
+        review_section = '<div class="empty-state">No deliverables awaiting review.</div>' + agent_internal_html
+
+    # Section 2: Staff Tasks (founder-relevant only, top N)
+    top_tasks = founder_tasks[:MAX_SUMMARY_TASKS]
+    overflow_tasks = founder_tasks[MAX_SUMMARY_TASKS:]
+
+    if top_tasks:
+        task_cards = '\n'.join(render_task_card(t) for t in top_tasks)
+        tasks_overflow = ''
+        if overflow_tasks:
+            overflow_task_cards = '\n'.join(render_task_card(t) for t in overflow_tasks)
+            tasks_overflow = f'''<details class="overflow-section">
+        <summary class="overflow-toggle">View {len(overflow_tasks)} more task{"s" if len(overflow_tasks) != 1 else ""}</summary>
+        <div class="task-grid overflow-content">{overflow_task_cards}</div>
+      </details>'''
+        tasks_section = f'<div class="task-grid">{task_cards}</div>\n{tasks_overflow}'
     else:
         tasks_section = '<div class="empty-state">No pending staff tasks.</div>'
 
