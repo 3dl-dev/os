@@ -8,11 +8,36 @@
 
 Architecture: `docs/architecture.md` (the founding design doc — read it, don't rewrite it).
 
+## The Mission
+
+The OS exists to **self-host an AI executive team**. The founder defines specs and answers questions. The AI team does the thinking, research, analysis, drafting, and coordination. The OS is the platform that makes this work.
+
+**Three surfaces, one state:**
+- **Console** (CLI/Claude Code) — deep work, system changes, architecture. Flynn's grid.
+- **Web** (dashboard.3dl.dev) — deliverable review, staff actions. The founder sees what the AI team produced and acts on it.
+- **Teams** (bot) — conversational ops, real-time. "What's ready?" from your phone.
+
+All three surfaces read/write the same beads state through the API. The founder uses whichever surface fits the moment.
+
+**The staff queue is the gravity well.** The AI team works autonomously — researching, drafting, analyzing, coordinating across projects. When work reaches the point where a human must act (sign a contract, make a phone call, approve a strategy, review a deliverable), it lands in the staff queue. The three surfaces show the staff queue. The founder processes it. The AI team picks up from there.
+
+**Agent Invocation is the core.** Without it, the OS is a fancy todo list. With it, the OS is a self-hosting AI management platform. The system spawns Claude agents with the right agent spec as system prompt, the right model tier for the task, and the right bead context. The agent does work, writes results to beads, and the three surfaces show what happened. This is the piece that makes it all real.
+
+**Gas Town connection:** The founder runs multiple complex projects (3DL ops, Aerocloak, GalTrader, etc.) simultaneously through this platform. The OS is both the infrastructure that enables this and the product that demonstrates it. "I run N projects and my only job is spec and decisions" — that's the pitch, and the OS is the proof.
+
+**3DL is the reference implementation.** The org layer (`~/projects/3dl/`) defines agents (CEO, CFO, Strategist, Counsel, CPEO, CIO, Marketing), authority tiers, and workflows. The OS layer provides the machinery. If it works for 3DL, it works as a product.
+
 ## CURRENT PHASE: Deploy and Ship (2026-02-15)
 
 **The architecture doc is DONE. The API and bot code are WRITTEN. Nothing is RUNNING.**
 
 Your job is to get this system live, not design more of it. Run `bd ready --no-daemon` for your work queue. Follow the dependency chain starting from the first unblocked P0 task.
+
+### What Went Wrong (Context for Why These Rules Exist)
+
+A previous session wrote an excellent architecture doc and built real API + bot code, then **veered sideways into framework-building**: a 722-line multi-org bootstrap CLI, a version alignment system, signal protocol tooling. These are premature abstractions — there is ONE org, ONE user, ONE machine. The session ended with "all beads closed" but nothing deployed. Code that doesn't run isn't shipped.
+
+The pattern: after finishing the two MVPs (API + bot), the session went **sideways into infrastructure** instead of **upward on the critical path** toward Agent Invocation and deployment. It built governance frameworks for a system that doesn't exist yet.
 
 ### Hard Rules for This Phase
 
@@ -34,6 +59,27 @@ Your job is to get this system live, not design more of it. Run `bd ready --no-d
 | Bootstrap CLI (`bin/os`) | 722 lines | FROZEN — do not extend |
 | Signal protocol (`docs/signal-protocol.md`) | 576 line spec | FROZEN — do not build tooling |
 | Version alignment | VERSION + os-check | FROZEN — do not extend |
+
+### Critical Path (from architecture.md, annotated with status)
+
+```
+1. Architecture doc              ✅ DONE (docs/architecture.md, 844 lines)
+2. Move renderer to os/web/      ✅ DONE (web/render-dashboard)
+3. Extract dashboard config       ✅ DONE (web/dashboard-config.yml)
+4. API layer MVP                  ⚠️  CODE EXISTS, NEVER RUN (api/main.py)
+5. Teams bot MVP                  ⚠️  CODE EXISTS, NEVER RUN (bot/)
+6. GitHub Actions write-back     ❌ NOT DONE
+7. Agent invocation              ❌ NOT DONE ← THE WHOLE POINT
+```
+
+### Key Infrastructure Details
+
+- **Azure bot app ID**: feccdf4f-de6a-4a38-b8c0-ea1487c2cf93 (manifest sideloaded, pinned in Teams)
+- **Credentials**: `.env` file in repo root (gitignored) — AZURE_APP_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET
+- **Dashboard**: dashboard.3dl.dev (GitHub Pages, private repo at ~/projects/dashboard/)
+- **API target URL**: localhost:3131 (Phase 1, local), atom.3dl.dev (Phase 2, VPS)
+- **Agent specs live in 3DL**: ~/projects/3dl/docs/agent-*.md (7 agents: CEO, CFO, Strategist, Counsel, CPEO, CIO, Marketing)
+- **Agent routing table design**: see architecture.md "Agent Routing" section — org-configurable task-type → tier/agent mapping
 
 ## Philosophy: Machines Are Cattle
 
