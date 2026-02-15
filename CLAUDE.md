@@ -23,9 +23,9 @@ All three surfaces read/write the same beads state through the API. The founder 
 
 **Agent Invocation is the core.** Without it, the OS is a fancy todo list. With it, the OS is a self-hosting AI management platform. The system spawns Claude agents with the right agent spec as system prompt, the right model tier for the task, and the right bead context. The agent does work, writes results to beads, and the three surfaces show what happened. This is the piece that makes it all real.
 
-**Gas Town connection:** The founder runs multiple complex projects (3DL ops, Aerocloak, GalTrader, etc.) simultaneously through this platform. The OS is both the infrastructure that enables this and the product that demonstrates it. "I run N projects and my only job is spec and decisions" — that's the pitch, and the OS is the proof.
+**This is the control plane.** The OS is the management interface for ALL projects in the portfolio (3DL ops, Aerocloak, GalTrader, etc.). It's how the founder sees what the AI team is doing across every project, acts on what needs human attention, and lets the AI team pick up from there. Right now the projects are managed through ad-hoc Claude Code sessions. The OS replaces that with a unified interface — three surfaces showing the same state, agents invoked through the platform instead of manually, staff queue items surfaced automatically.
 
-**3DL is the reference implementation.** The org layer (`~/projects/3dl/`) defines agents (CEO, CFO, Strategist, Counsel, CPEO, CIO, Marketing), authority tiers, and workflows. The OS layer provides the machinery. If it works for 3DL, it works as a product.
+**3DL is the reference implementation.** The org layer (`~/projects/3dl/`) defines agents (CEO, CFO, Strategist, Counsel, CPEO, CIO, Marketing), authority tiers, and workflows. The OS layer provides the machinery. Get it working for 3DL first — one org, one founder, real projects.
 
 ## CURRENT PHASE: Deploy and Ship (2026-02-15)
 
