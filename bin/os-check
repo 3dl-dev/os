@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+OS_DIR="$(cd "$(dirname "$REAL_SCRIPT")/.." && pwd)"
+PROJECT_ROOT="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+
+OS_VERSION=$(cat "$OS_DIR/VERSION")
+CHANGELOG="$OS_DIR/CHANGELOG.md"
+
+# Read project's OS version (0 = pre-versioning)
+if [ -f "$PROJECT_ROOT/.os-version" ]; then
+  PROJECT_VERSION=$(cat "$PROJECT_ROOT/.os-version" | tr -d '[:space:]')
+else
+  PROJECT_VERSION=0
+fi
+
+echo "OS version:      $OS_VERSION"
+echo "Project version: $PROJECT_VERSION"
+echo "Project:         $PROJECT_ROOT"
+echo ""
+
+if [ "$PROJECT_VERSION" = "__OS_VERSION__" ]; then
+  echo "WARNING: Project .os-version contains placeholder — was new-project.sh used?"
+  PROJECT_VERSION=0
+fi
+
+if [ "$PROJECT_VERSION" -eq "$OS_VERSION" ] 2>/dev/null; then
+  echo "OK: Project is aligned with current OS version."
+  exit 0
+fi
+
+if [ "$PROJECT_VERSION" -gt "$OS_VERSION" ] 2>/dev/null; then
+  echo "WARNING: Project version ($PROJECT_VERSION) is ahead of OS ($OS_VERSION)."
+  exit 1
+fi
+
+echo "OUTDATED: Project is at v$PROJECT_VERSION, OS is at v$OS_VERSION."
+echo ""
+echo "Changes since project version:"
+echo "---"
+
+# Extract changelog entries between project version and current
+# Show all ## Version N entries where N > PROJECT_VERSION
+awk -v pv="$PROJECT_VERSION" '
+  /^## Version [0-9]+/ {
+    match($0, /[0-9]+/)
+    v = substr($0, RSTART, RLENGTH) + 0
+    if (v > pv) { show = 1 } else { show = 0 }
+  }
+  show { print }
+' "$CHANGELOG"
+
+echo "---"
+echo ""
+echo "To update: review changes above, apply needed backports, then:"
+echo "  echo $OS_VERSION > $PROJECT_ROOT/.os-version"
+exit 2

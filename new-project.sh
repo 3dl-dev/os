@@ -18,6 +18,10 @@ fi
 
 cp -r "$SCRIPT_DIR/template" "$TARGET"
 
+# Stamp OS version into the new project
+OS_VERSION=$(cat "$SCRIPT_DIR/VERSION")
+echo "$OS_VERSION" > "$TARGET/.os-version"
+
 cd "$TARGET"
 git init
 git add -A

@@ -102,6 +102,8 @@ Changes to `template/` only affect future projects created with `new-project.sh`
 ```
 os/
 ├── CLAUDE.md              # This file — OS repo project instructions
+├── VERSION                # OS version number (integer, increments on notable changes)
+├── CHANGELOG.md           # What changed in each version + backport guidance
 ├── setup.sh               # Machine bootstrap (symlinks)
 ├── new-project.sh         # Scaffold new project from template
 ├── claude/
@@ -112,7 +114,8 @@ os/
 │   └── docker-compose.yml # Shared services (PROJECT_ROOT-aware)
 ├── bin/
 │   ├── bd                 # Beads wrapper (symlinked → ~/.local/bin/)
-│   └── gh                 # GitHub CLI wrapper (symlinked → ~/.local/bin/)
+│   ├── gh                 # GitHub CLI wrapper (symlinked → ~/.local/bin/)
+│   └── os-check           # Version compliance checker (symlinked → ~/.local/bin/)
 ├── docs/
 │   └── spin-up-protocol.md # Conversational project creation protocol
 ├── template/              # Project skeleton (copied by new-project.sh)
