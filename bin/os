@@ -8,6 +8,7 @@ Usage:
   os bootstrap <org-repo-path>   Register an org and generate derived configs
   os status                      Show what the OS knows
   os projects [--json]           List all projects across all orgs
+  os sweep [--json] [--signals-only]  Cross-project scan: signals + P0/P1 beads
 """
 
 import json
@@ -339,6 +340,152 @@ def cmd_projects(args):
             print(f'{p["org"]}/{p["name"]:16s} {p["path"]}{role_tag}')
 
 
+def _find_bd():
+    """Find the bd binary."""
+    import shutil
+    bd = shutil.which('bd')
+    if bd:
+        return bd
+    bd_path = OS_DIR / 'bin' / 'bd'
+    if bd_path.exists():
+        return str(bd_path)
+    return None
+
+
+def _get_beads(repo_path):
+    """Get all beads from a repo as JSON."""
+    import subprocess
+    bd = _find_bd()
+    if not bd:
+        return []
+    try:
+        result = subprocess.run(
+            [bd, 'list', '--json', '--no-daemon'],
+            capture_output=True, text=True, cwd=str(repo_path), timeout=30
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        pass
+    return []
+
+
+def _get_all_projects():
+    """Get all projects from all orgs (including org repos)."""
+    orgs = read_os_conf()
+    projects = []
+    for org_name, org_path_str in orgs.items():
+        org_path = Path(org_path_str)
+        os_yml_path = org_path / 'os.yml'
+        if not os_yml_path.exists():
+            continue
+
+        config = parse_os_yml(os_yml_path)
+        base_dir = org_path.parent
+
+        # Org repo itself
+        projects.append({
+            'org': org_name,
+            'name': org_name,
+            'path': org_path,
+            'prefix': config['org'].get('bead-prefix', org_name),
+            'role': 'organization',
+        })
+
+        for proj_name, proj_cfg in config.get('projects', {}).items():
+            proj_path = resolve_path(proj_cfg.get('path', f'~/projects/{proj_name}'), base_dir)
+            projects.append({
+                'org': org_name,
+                'name': proj_name,
+                'path': proj_path,
+                'prefix': proj_cfg.get('bead-prefix', proj_name),
+                'role': proj_cfg.get('role', 'project'),
+            })
+
+    return projects
+
+
+def cmd_sweep(args):
+    """Cross-project sweep: find signals, high-priority beads, stale items."""
+    as_json = '--json' in args
+    signals_only = '--signals-only' in args
+
+    projects = _get_all_projects()
+    if not projects:
+        print('No projects registered. Run: os bootstrap <org-repo-path>')
+        return
+
+    all_signals = []
+    all_high_pri = []
+    all_stale = []
+
+    for proj in projects:
+        repo_path = proj['path']
+        if not repo_path.exists():
+            continue
+
+        beads = _get_beads(repo_path)
+        open_beads = [b for b in beads if b.get('status') == 'open']
+
+        for b in open_beads:
+            title = b.get('title', '')
+            priority = b.get('priority', 99)
+            bead_id = b.get('id', '')
+
+            # Staff signals
+            if title.startswith('STAFF-SIGNAL:') or title.startswith('SIGNAL('):
+                all_signals.append({
+                    'repo': proj['name'],
+                    'id': bead_id,
+                    'title': title,
+                    'priority': priority,
+                    'created': b.get('created_at', b.get('created', ''))[:10],
+                    'type': 'signal',
+                })
+
+            # High priority (P0/P1) — not signals
+            elif priority <= 1 and not signals_only:
+                all_high_pri.append({
+                    'repo': proj['name'],
+                    'id': bead_id,
+                    'title': title,
+                    'priority': priority,
+                    'created': b.get('created_at', b.get('created', ''))[:10],
+                    'type': 'high-pri',
+                })
+
+    # Sort
+    all_signals.sort(key=lambda x: (x['priority'], x['created']))
+    all_high_pri.sort(key=lambda x: (x['priority'], x['created']))
+
+    if as_json:
+        print(json.dumps({
+            'signals': all_signals,
+            'high_priority': all_high_pri,
+        }, indent=2))
+        return
+
+    # Human-readable output
+    if all_signals:
+        print(f'Signals ({len(all_signals)}):')
+        for s in all_signals:
+            print(f'  P{s["priority"]} {s["repo"]}/{s["id"]:16s} {s["title"]}')
+    else:
+        print('No pending signals.')
+
+    if not signals_only:
+        print()
+        if all_high_pri:
+            print(f'High Priority P0/P1 ({len(all_high_pri)}):')
+            for h in all_high_pri:
+                print(f'  P{h["priority"]} {h["repo"]}/{h["id"]:16s} {h["title"]}')
+        else:
+            print('No high-priority open beads.')
+
+    total = len(all_signals) + len(all_high_pri)
+    print(f'\nScanned {len(projects)} repos. {total} items found.')
+
+
 def cmd_help(args):
     """Print usage."""
     print(__doc__.strip())
@@ -350,6 +497,7 @@ COMMANDS = {
     'bootstrap': cmd_bootstrap,
     'status': cmd_status,
     'projects': cmd_projects,
+    'sweep': cmd_sweep,
     'help': cmd_help,
     '--help': cmd_help,
     '-h': cmd_help,

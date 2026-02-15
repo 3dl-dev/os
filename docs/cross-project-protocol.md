@@ -85,37 +85,45 @@ The Marketing agent (running in a 3dl session) reads from the 3dl repo and write
 - Commits in the website repo with a message referencing the 3dl blog bead
 - Closes the 3dl blog bead with reason: "Published to website"
 
-## CEO Cross-Project Sweep
+## Cross-Project Sweep
 
-Added to the CEO's session protocol in 3dl. Runs at session open.
-
-### Procedure
-
-For each spoke repo in the project registry:
+The `os sweep` command replaces the manual CEO sweep script. It uses the org registry (`os.yml`) for project discovery.
 
 ```bash
-cd /home/baron/projects/<repo-dir>
-bd list --json | python3 -c "
-import json, sys
-beads = json.load(sys.stdin)
-signals = [b for b in beads if b.get('status') == 'open' and b.get('title','').startswith('STAFF-SIGNAL:')]
-high_pri = [b for b in beads if b.get('status') == 'open' and b.get('priority', 99) <= 1]
-for s in signals: print(f'SIGNAL: {s[\"id\"]} - {s[\"title\"]}')
-for h in high_pri: print(f'P{h[\"priority\"]}: {h[\"id\"]} - {h[\"title\"]}')
-" 2>/dev/null
+os sweep                     # signals + P0/P1 across all repos
+os sweep --signals-only      # just pending signals
+os sweep --json              # machine-parseable output
 ```
 
 ### What the Sweep Catches
 
-1. **Staff signals**: Open `STAFF-SIGNAL:` beads → import to 3dl staff queue
-2. **High-priority work**: P0/P1 open beads → CEO awareness, may trigger cross-project prioritization
-3. **Publish-ready posts**: Blog posts with editorial approval → trigger Stage 3 handoff
+1. **Staff signals**: Open `STAFF-SIGNAL:` beads → import to org staff queue
+2. **High-priority work**: P0/P1 open beads → CEO awareness, cross-project prioritization
+3. **Signal protocol beads**: `SIGNAL(type):` beads (see `docs/signal-protocol.md`)
 
-### Sweep Output
+### Using the Sweep
 
-The CEO reports findings at session open:
-- New staff signals found (and imports them)
-- High-priority spoke work that may need attention
-- Any cross-project conflicts or dependencies surfaced
+At session open, run `os sweep`. If items are found:
+- Import new staff signals to the org staff queue
+- Note high-priority spoke work that may need attention
+- Check for cross-project conflicts or dependencies
 
-If nothing found, no report needed. Don't waste tokens on "no signals found."
+If nothing found, no report needed.
+
+## Signal Protocol
+
+The generalized cross-repo communication protocol extends STAFF-SIGNAL to four signal types: `staff-signal`, `request`, `notify`, `query`. Full spec: `docs/signal-protocol.md`.
+
+Key principle: every repo is sovereign. No repo writes to another repo's `.beads/`. Communication is through signal beads discovered via pull-based scanning (`os sweep`, `bd inbox`).
+
+## Project Discovery
+
+Project paths are discovered via `os.yml` (in the org repo) and `os.conf` (machine-local registry). See `docs/bootstrap-config.md` for the full spec.
+
+```bash
+os projects              # list all projects
+os projects --json       # machine-parseable
+os status                # show orgs + project alignment
+```
+
+This replaces hardcoded project registry tables. Tools (dashboard renderer, API server, Teams bot) use `os projects` for discovery.
