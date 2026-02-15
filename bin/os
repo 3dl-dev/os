@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+"""OS bootstrap and management CLI.
+
+Manages the relationship between the OS, organizations, and projects.
+See docs/bootstrap-config.md for the full spec.
+
+Usage:
+  os bootstrap <org-repo-path>   Register an org and generate derived configs
+  os status                      Show what the OS knows
+  os projects [--json]           List all projects across all orgs
+"""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+# ── Constants ──
+
+OS_CONF = Path.home() / '.local' / 'share' / 'os' / 'os.conf'
+OS_DIR = Path(__file__).resolve().parent.parent
+VERSION_FILE = OS_DIR / 'VERSION'
+
+
+# ── Minimal YAML Parser ──
+
+def parse_os_yml(path):
+    """Parse os.yml with a minimal YAML parser.
+
+    Handles the nested structure we need without external deps.
+    """
+    content = path.read_text()
+    lines = content.split('\n')
+
+    result = {
+        'org': {},
+        'projects': {},
+        'dashboard': {},
+    }
+
+    section = None
+    subsection = None
+    current_project = None
+    current_review = None
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if not stripped or stripped.startswith('#'):
+            i += 1
+            continue
+
+        indent = len(line) - len(line.lstrip())
+
+        # Top-level sections
+        if indent == 0 and stripped.endswith(':'):
+            key = stripped[:-1]
+            if key in ('org', 'projects', 'dashboard'):
+                section = key
+                subsection = None
+                current_project = None
+            i += 1
+            continue
+
+        if indent == 0 and ': ' in stripped:
+            key, _, val = stripped.partition(':')
+            key = key.strip()
+            val = val.strip().strip("'\"")
+            if key in ('org', 'projects', 'dashboard'):
+                section = key
+            i += 1
+            continue
+
+        # org fields
+        if section == 'org' and indent >= 2:
+            if ': ' in stripped:
+                key, _, val = stripped.partition(':')
+                result['org'][key.strip()] = val.strip().strip("'\"")
+
+        # projects fields
+        elif section == 'projects' and indent >= 2:
+            if indent == 2 and stripped.endswith(':'):
+                current_project = stripped[:-1].strip()
+                result['projects'][current_project] = {}
+            elif indent == 2 and ': ' in stripped and not stripped.startswith('-'):
+                key, _, val = stripped.partition(':')
+                current_project = key.strip()
+                result['projects'][current_project] = {}
+            elif indent >= 4 and current_project and ': ' in stripped:
+                key, _, val = stripped.partition(':')
+                result['projects'][current_project][key.strip()] = val.strip().strip("'\"")
+
+        # dashboard fields
+        elif section == 'dashboard' and indent >= 2:
+            if stripped.startswith('repo:'):
+                result['dashboard']['repo'] = stripped[5:].strip().strip("'\"")
+            elif stripped.startswith('standalone-reviews:'):
+                subsection = 'standalone-reviews'
+                result['dashboard']['standalone-reviews'] = []
+            elif subsection == 'standalone-reviews':
+                if stripped.startswith('- path:'):
+                    val = stripped[7:].strip().strip("'\"")
+                    current_review = {'path': val, 'action': 'Review', 'agent': ''}
+                    result['dashboard']['standalone-reviews'].append(current_review)
+                elif stripped.startswith('action:') and current_review:
+                    current_review['action'] = stripped[7:].strip().strip("'\"")
+                elif stripped.startswith('agent:') and current_review:
+                    current_review['agent'] = stripped[6:].strip().strip("'\"")
+
+        i += 1
+
+    return result
+
+
+def resolve_path(raw, base_dir):
+    """Resolve a path relative to a base directory, expanding ~."""
+    expanded = os.path.expanduser(raw)
+    p = Path(expanded)
+    if not p.is_absolute():
+        p = base_dir / p
+    return p.resolve()
+
+
+# ── os.conf Management ──
+
+def read_os_conf():
+    """Read os.conf. Returns dict of org_name -> repo_path."""
+    orgs = {}
+    if OS_CONF.exists():
+        for line in OS_CONF.read_text().strip().split('\n'):
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                orgs[parts[0]] = parts[1]
+    return orgs
+
+
+def write_os_conf(orgs):
+    """Write os.conf."""
+    OS_CONF.parent.mkdir(parents=True, exist_ok=True)
+    lines = ['# OS organization registry (managed by os bootstrap)']
+    for name, path in sorted(orgs.items()):
+        lines.append(f'{name} {path}')
+    OS_CONF.write_text('\n'.join(lines) + '\n')
+
+
+# ── Dashboard Config Generation ──
+
+def generate_dashboard_config(config, org_repo_path):
+    """Generate dashboard-config.yml from os.yml."""
+    org_name = config['org'].get('name', 'unknown')
+    base_dir = org_repo_path.parent
+
+    lines = [
+        '# AUTO-GENERATED by os bootstrap — do not edit manually',
+        f'# Source: {org_repo_path}/os.yml',
+        '',
+        'projects:',
+    ]
+
+    # Org repo itself
+    lines.append(f'  {org_name}: {org_repo_path}')
+
+    # All projects
+    for proj_name, proj_cfg in config['projects'].items():
+        proj_path = resolve_path(proj_cfg.get('path', f'~/projects/{proj_name}'), base_dir)
+        lines.append(f'  {proj_name}: {proj_path}')
+
+    lines.append('')
+
+    # Dashboard repo
+    dash_repo = config.get('dashboard', {}).get('repo', '')
+    if dash_repo:
+        dash_path = resolve_path(dash_repo, base_dir)
+        lines.append(f'dashboard_repo: {dash_path}')
+    lines.append(f'org_repo: {org_name}')
+    lines.append('')
+
+    # Standalone reviews
+    reviews = config.get('dashboard', {}).get('standalone-reviews', [])
+    if reviews:
+        lines.append('standalone_review_docs:')
+        for rev in reviews:
+            lines.append(f'  - path: {rev["path"]}')
+            lines.append(f'    action: {rev["action"]}')
+            if rev.get('agent'):
+                lines.append(f'    agent: {rev["agent"]}')
+
+    return '\n'.join(lines) + '\n'
+
+
+# ── Commands ──
+
+def cmd_bootstrap(args):
+    """Register an org and generate derived configs."""
+    if not args:
+        print('Usage: os bootstrap <org-repo-path>', file=sys.stderr)
+        sys.exit(1)
+
+    org_repo = Path(os.path.expanduser(args[0])).resolve()
+    os_yml_path = org_repo / 'os.yml'
+
+    if not os_yml_path.exists():
+        print(f'Error: No os.yml found at {os_yml_path}', file=sys.stderr)
+        sys.exit(1)
+
+    print(f'Reading os.yml from {org_repo}...')
+    config = parse_os_yml(os_yml_path)
+
+    org_name = config['org'].get('name', 'unknown')
+    org_display = config['org'].get('display', org_name)
+
+    print(f'Org: {org_name} ({org_display})')
+    print('Projects:')
+
+    base_dir = org_repo.parent
+    project_status = []
+    for proj_name, proj_cfg in config['projects'].items():
+        proj_path = resolve_path(proj_cfg.get('path', f'~/projects/{proj_name}'), base_dir)
+        exists = proj_path.exists()
+        status = 'exists' if exists else 'MISSING'
+        mark = '\u2713' if exists else '\u2717'
+        print(f'  {proj_name:16s} {proj_path}  {mark} {status}')
+        project_status.append((proj_name, proj_path, exists))
+
+    # Register in os.conf
+    orgs = read_os_conf()
+    orgs[org_name] = str(org_repo)
+    write_os_conf(orgs)
+    print(f'\nRegistered {org_name} in {OS_CONF}')
+
+    # Generate dashboard config
+    dash_config = generate_dashboard_config(config, org_repo)
+    dash_config_path = OS_DIR / 'web' / 'dashboard-config.yml'
+    dash_config_path.write_text(dash_config)
+    print(f'Generated dashboard config at {dash_config_path}')
+
+    existing = sum(1 for _, _, e in project_status if e)
+    missing = len(project_status) - existing
+    print(f'\nDone. The OS now knows about {org_name} and its {len(project_status)} projects ({existing} exist, {missing} missing).')
+
+
+def cmd_status(args):
+    """Show what the OS knows."""
+    os_version = VERSION_FILE.read_text().strip() if VERSION_FILE.exists() else '?'
+    print(f'OS: {OS_DIR} (v{os_version})')
+
+    orgs = read_os_conf()
+    print(f'Orgs: {len(orgs)}')
+
+    if not orgs:
+        print('\nNo organizations registered. Run: os bootstrap <org-repo-path>')
+        return
+
+    for org_name, org_path_str in orgs.items():
+        org_path = Path(org_path_str)
+        os_yml_path = org_path / 'os.yml'
+
+        if not os_yml_path.exists():
+            print(f'\n{org_name} ({org_path_str})')
+            print(f'  Config: MISSING ({os_yml_path})')
+            continue
+
+        config = parse_os_yml(os_yml_path)
+        display = config['org'].get('display', org_name)
+        print(f'\n{org_name} ({display})')
+        print(f'  Config: {os_yml_path}')
+
+        base_dir = org_path.parent
+        projects = config.get('projects', {})
+        existing = 0
+        for proj_name, proj_cfg in projects.items():
+            proj_path = resolve_path(proj_cfg.get('path', f'~/projects/{proj_name}'), base_dir)
+            exists = proj_path.exists()
+            if exists:
+                existing += 1
+
+            # Check os-version alignment
+            os_ver_file = proj_path / '.os-version'
+            if os_ver_file.exists():
+                proj_ver = os_ver_file.read_text().strip()
+                if proj_ver == os_version:
+                    ver_status = f'v{proj_ver} (aligned)'
+                else:
+                    ver_status = f'v{proj_ver} (outdated)'
+            else:
+                ver_status = 'v0 (no .os-version)'
+
+            mark = '\u2713' if exists else '\u2717'
+            print(f'    {proj_name:16s} {proj_path}  {mark} {ver_status}')
+
+        missing = len(projects) - existing
+        print(f'  Projects: {len(projects)} ({existing} exist, {missing} missing)')
+
+
+def cmd_projects(args):
+    """List all projects across all orgs."""
+    as_json = '--json' in args
+    orgs = read_os_conf()
+
+    all_projects = []
+    for org_name, org_path_str in orgs.items():
+        org_path = Path(org_path_str)
+        os_yml_path = org_path / 'os.yml'
+        if not os_yml_path.exists():
+            continue
+
+        config = parse_os_yml(os_yml_path)
+        base_dir = org_path.parent
+
+        # Include org repo itself
+        all_projects.append({
+            'org': org_name,
+            'name': org_name,
+            'path': str(org_path),
+            'prefix': config['org'].get('bead-prefix', org_name),
+            'role': 'organization',
+        })
+
+        for proj_name, proj_cfg in config.get('projects', {}).items():
+            proj_path = resolve_path(proj_cfg.get('path', f'~/projects/{proj_name}'), base_dir)
+            all_projects.append({
+                'org': org_name,
+                'name': proj_name,
+                'path': str(proj_path),
+                'prefix': proj_cfg.get('bead-prefix', proj_name),
+                'role': proj_cfg.get('role', 'project'),
+            })
+
+    if as_json:
+        print(json.dumps(all_projects, indent=2))
+    else:
+        for p in all_projects:
+            role_tag = f' [{p["role"]}]' if p['role'] != 'project' else ''
+            print(f'{p["org"]}/{p["name"]:16s} {p["path"]}{role_tag}')
+
+
+def cmd_help(args):
+    """Print usage."""
+    print(__doc__.strip())
+
+
+# ── Main ──
+
+COMMANDS = {
+    'bootstrap': cmd_bootstrap,
+    'status': cmd_status,
+    'projects': cmd_projects,
+    'help': cmd_help,
+    '--help': cmd_help,
+    '-h': cmd_help,
+}
+
+
+def main():
+    if len(sys.argv) < 2:
+        cmd_help([])
+        sys.exit(1)
+
+    cmd = sys.argv[1]
+    if cmd not in COMMANDS:
+        print(f'Unknown command: {cmd}', file=sys.stderr)
+        cmd_help([])
+        sys.exit(1)
+
+    COMMANDS[cmd](sys.argv[2:])
+
+
+if __name__ == '__main__':
+    main()

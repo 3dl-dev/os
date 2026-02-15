@@ -115,9 +115,11 @@ os/
 ├── bin/
 │   ├── bd                 # Beads wrapper (symlinked → ~/.local/bin/)
 │   ├── gh                 # GitHub CLI wrapper (symlinked → ~/.local/bin/)
+│   ├── os                 # OS management CLI: bootstrap, status, projects
 │   └── os-check           # Version compliance checker (symlinked → ~/.local/bin/)
 ├── docs/
-│   └── spin-up-protocol.md # Conversational project creation protocol
+│   ├── spin-up-protocol.md # Conversational project creation protocol
+│   └── bootstrap-config.md # os.yml format spec + bootstrap architecture
 ├── template/              # Project skeleton (copied by new-project.sh)
 │   ├── CLAUDE.md          # Project instructions template
 │   ├── BOOTSTRAP.md       # 9-section setup checklist (spin-up aware)
