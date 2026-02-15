@@ -9,6 +9,8 @@ Usage:
   os status                      Show what the OS knows
   os projects [--json]           List all projects across all orgs
   os sweep [--json] [--signals-only]  Cross-project scan: signals + P0/P1 beads
+  os signal --type <type> --to <repo> "title"  Create a signal bead
+  os inbox [--from <repo>] [--type <type>] [--json]  Check incoming signals
 """
 
 import json
@@ -486,6 +488,202 @@ def cmd_sweep(args):
     print(f'\nScanned {len(projects)} repos. {total} items found.')
 
 
+def cmd_signal(args):
+    """Create a signal bead in the current repo."""
+    import subprocess
+
+    # Parse args
+    signal_type = None
+    to_repos = []
+    priority = 2
+    route_agent = None
+    route_tier = None
+    context_refs = []
+    title_parts = []
+
+    i = 0
+    while i < len(args):
+        if args[i] == '--type' and i + 1 < len(args):
+            signal_type = args[i + 1]
+            i += 2
+        elif args[i] == '--to' and i + 1 < len(args):
+            to_repos = [r.strip() for r in args[i + 1].split(',')]
+            i += 2
+        elif args[i] == '-p' and i + 1 < len(args):
+            priority = int(args[i + 1])
+            i += 2
+        elif args[i] == '--route' and i + 1 < len(args):
+            parts = args[i + 1].split(':')
+            route_agent = parts[0]
+            route_tier = parts[1] if len(parts) > 1 else None
+            i += 2
+        elif args[i] == '--context' and i + 1 < len(args):
+            context_refs = [r.strip() for r in args[i + 1].split(',')]
+            i += 2
+        else:
+            title_parts.append(args[i])
+            i += 1
+
+    title = ' '.join(title_parts)
+
+    if not signal_type:
+        print('Error: --type required (staff-signal, request, notify, query)', file=sys.stderr)
+        sys.exit(1)
+    if not to_repos:
+        print('Error: --to required (target repo name)', file=sys.stderr)
+        sys.exit(1)
+    if not title:
+        print('Error: signal title required', file=sys.stderr)
+        sys.exit(1)
+
+    valid_types = ('staff-signal', 'request', 'notify', 'query')
+    if signal_type not in valid_types:
+        print(f'Error: --type must be one of: {", ".join(valid_types)}', file=sys.stderr)
+        sys.exit(1)
+
+    # Detect current repo name
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--show-toplevel'],
+            capture_output=True, text=True, timeout=5
+        )
+        from_repo = Path(result.stdout.strip()).name
+    except Exception:
+        from_repo = 'unknown'
+
+    # Build bd create command
+    full_title = f'SIGNAL({signal_type}): {title}'
+    labels = f'signal,signal:{signal_type}'
+    for repo in to_repos:
+        labels += f',to:{repo}'
+
+    # Build description with signal metadata
+    desc_parts = [f'## Signal: {signal_type}']
+    desc_parts.append(f'**From**: {from_repo}  **To**: {", ".join(to_repos)}')
+    if route_agent:
+        routing_str = route_agent
+        if route_tier:
+            routing_str += f' ({route_tier})'
+        desc_parts.append(f'**Routing**: {routing_str}')
+    desc_parts.append('')
+    desc_parts.append(title)
+    if context_refs:
+        desc_parts.append('')
+        desc_parts.append('**Context**:')
+        for ref in context_refs:
+            desc_parts.append(f'- {ref}')
+
+    description = '\n'.join(desc_parts)
+
+    bd = _find_bd()
+    if not bd:
+        print('Error: bd not found', file=sys.stderr)
+        sys.exit(1)
+
+    cmd = [
+        bd, 'create', full_title,
+        '-p', str(priority),
+        '-l', labels,
+        '-d', description,
+        '--no-daemon',
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        print(result.stdout.strip())
+    else:
+        print(f'Error creating signal: {result.stderr.strip()}', file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_inbox(args):
+    """Check incoming signals addressed to the current repo."""
+    import subprocess
+
+    # Detect current repo name
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--show-toplevel'],
+            capture_output=True, text=True, timeout=5
+        )
+        my_repo = Path(result.stdout.strip()).name
+    except Exception:
+        print('Error: not in a git repo', file=sys.stderr)
+        sys.exit(1)
+
+    as_json = '--json' in args
+    from_filter = None
+    type_filter = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == '--from' and i + 1 < len(args):
+            from_filter = args[i + 1]
+            i += 2
+        elif args[i] == '--type' and i + 1 < len(args):
+            type_filter = args[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    projects = _get_all_projects()
+    inbox_items = []
+
+    for proj in projects:
+        repo_path = proj['path']
+        repo_name = proj['name']
+
+        if not repo_path.exists():
+            continue
+        if from_filter and repo_name != from_filter:
+            continue
+        if repo_name == my_repo:
+            continue  # Don't scan self
+
+        beads = _get_beads(repo_path)
+        for b in beads:
+            if b.get('status') == 'closed':
+                continue
+            labels = b.get('labels') or []
+            if 'signal' not in labels:
+                continue
+            if f'to:{my_repo}' not in labels:
+                continue
+
+            # Extract signal type from labels
+            sig_type = 'unknown'
+            for l in labels:
+                if l.startswith('signal:') and l != 'signal':
+                    sig_type = l.split(':', 1)[1]
+
+            if type_filter and sig_type != type_filter:
+                continue
+
+            inbox_items.append({
+                'from': repo_name,
+                'id': b.get('id', ''),
+                'priority': b.get('priority', 99),
+                'type': sig_type,
+                'title': b.get('title', ''),
+                'created': b.get('created_at', b.get('created', ''))[:10],
+            })
+
+    inbox_items.sort(key=lambda x: (x['priority'], x['created']))
+
+    if as_json:
+        print(json.dumps(inbox_items, indent=2))
+        return
+
+    if not inbox_items:
+        print(f'No incoming signals for {my_repo}.')
+        return
+
+    print(f'Inbox for {my_repo} ({len(inbox_items)} signals):')
+    print(f'{"FROM":8s} {"ID":18s} {"P":2s} {"TYPE":14s} TITLE')
+    for item in inbox_items:
+        print(f'{item["from"]:8s} {item["id"]:18s} {item["priority"]:1d}  {item["type"]:14s} {item["title"]}')
+
+
 def cmd_help(args):
     """Print usage."""
     print(__doc__.strip())
@@ -498,6 +696,8 @@ COMMANDS = {
     'status': cmd_status,
     'projects': cmd_projects,
     'sweep': cmd_sweep,
+    'signal': cmd_signal,
+    'inbox': cmd_inbox,
     'help': cmd_help,
     '--help': cmd_help,
     '-h': cmd_help,
