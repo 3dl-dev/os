@@ -163,16 +163,14 @@ The `signal` dimension tracks the cross-repo handshake. The bead's own `status` 
 
 ### Project Registry
 
-Each repo stores the registry of known peers:
+Project discovery uses the OS bootstrap system (`os.yml` + `os.conf`). See `docs/bootstrap-config.md`.
 
 ```bash
-bd config set signal.repos "3dl,os,website,mag-shield,galtrader,vms"
-bd config set signal.paths.3dl "/home/baron/projects/3dl"
-bd config set signal.paths.os "/home/baron/projects/os"
-# ... etc
+os projects --json       # machine-parseable list of all repos
+os sweep                 # cross-project scan for signals + P0/P1
 ```
 
-This is set once during repo setup (or by the OS `setup.sh`).
+The `os sweep` command replaces per-repo `bd config` for project registration. All repos registered via `os bootstrap` are automatically discoverable.
 
 ### Inbox Scan
 
