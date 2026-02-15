@@ -10,22 +10,28 @@ Architecture: `docs/architecture.md` (the founding design doc — read it, don't
 
 ## The Mission
 
-The OS exists to **self-host an AI executive team**. The founder defines specs and answers questions. The AI team does the thinking, research, analysis, drafting, and coordination. The OS is the platform that makes this work.
+This is an **AI-driven Enterprise Operating System**. The AI doesn't just execute tasks — it runs the enterprise. It manages all projects, orchestrates all work, routes tasks to the right people at the right time, and drives everything through three surfaces that any stakeholder can use.
+
+**What it manages:**
+- **All projects** under the business (3DL ops, Aerocloak, GalTrader, website, etc.)
+- **All people** in the business — founder today, staff/contractors as the business grows
+- **All AI agents** that do the thinking, research, analysis, drafting, and coordination
+- **The flow between them** — AI does work, surfaces what needs human action, routes it to the right person based on role/skills/capacity, picks up when they're done
 
 **Three surfaces, one state:**
 - **Console** (CLI/Claude Code) — deep work, system changes, architecture. Flynn's grid.
-- **Web** (dashboard.3dl.dev) — deliverable review, staff actions. The founder sees what the AI team produced and acts on it.
+- **Web** (dashboard.3dl.dev) — deliverable review, staff actions. People see their work and act on it.
 - **Teams** (bot) — conversational ops, real-time. "What's ready?" from your phone.
 
-All three surfaces read/write the same beads state through the API. The founder uses whichever surface fits the moment.
+All three surfaces read/write the same beads state through the API. Everyone uses whichever surface fits the moment.
 
-**The staff queue is the gravity well.** The AI team works autonomously — researching, drafting, analyzing, coordinating across projects. When work reaches the point where a human must act (sign a contract, make a phone call, approve a strategy, review a deliverable), it lands in the staff queue. The three surfaces show the staff queue. The founder processes it. The AI team picks up from there.
+**The staff queue is the gravity well.** AI agents work autonomously across all projects — researching, drafting, analyzing, coordinating. When work reaches the point where a human must act (sign a contract, make a phone call, approve a deliverable, do billable work), it lands in the staff queue, routed to the right role. Each role has a managing agent who packages the work item with everything needed to execute. The three surfaces show each person their queue. They act on it. The AI picks up from there.
 
-**Agent Invocation is the core.** Without it, the OS is a fancy todo list. With it, the OS is a self-hosting AI management platform. The system spawns Claude agents with the right agent spec as system prompt, the right model tier for the task, and the right bead context. The agent does work, writes results to beads, and the three surfaces show what happened. This is the piece that makes it all real.
+**Staffing is an OS concern.** The org layer defines roles (Principal, Account Manager, Practitioner, Business Admin, BD, IT Operator — see `3dl/docs/staff-protocol.md`), staff profiles (skills, capacity, motivations, working style), and capacity budgets. The OS provides the machinery: surfaces that show the right items to the right people, agents that can read profiles and make routing decisions, capacity tracking, role-based filtering. As the business grows from one founder to multiple staff, the OS scales the management — not by adding managers, but by having AI agents manage each role's work.
 
-**This is the control plane.** The OS is the management interface for ALL projects in the portfolio (3DL ops, Aerocloak, GalTrader, etc.). It's how the founder sees what the AI team is doing across every project, acts on what needs human attention, and lets the AI team pick up from there. Right now the projects are managed through ad-hoc Claude Code sessions. The OS replaces that with a unified interface — three surfaces showing the same state, agents invoked through the platform instead of manually, staff queue items surfaced automatically.
+**Agent Invocation is the prerequisite.** Without it, the OS is a fancy todo list. With it, AI agents can be spawned to do real work: the CEO sweeps all projects, the Strategist researches a market, the CFO models the runway, the Counsel reviews a contract. They write results to beads, and the three surfaces show what happened. This is the current phase — getting agent invocation working so the AI can actually run the enterprise, not just track it.
 
-**3DL is the reference implementation.** The org layer (`~/projects/3dl/`) defines agents (CEO, CFO, Strategist, Counsel, CPEO, CIO, Marketing), authority tiers, and workflows. The OS layer provides the machinery. Get it working for 3DL first — one org, one founder, real projects.
+**3DL is the reference implementation.** The org layer (`~/projects/3dl/`) defines 7 agents (CEO, CFO, Strategist, Counsel, CPEO, CIO, Marketing), authority tiers, role definitions, and workflows. The OS provides the machinery. Get it working for 3DL first — one org, one founder, real projects. Then it works for any org.
 
 ## CURRENT PHASE: Deploy and Ship (2026-02-15)
 

@@ -778,9 +778,8 @@ galtrader/                       # A PROJECT (workload)
 This system dog-foods itself. As it's built, it runs the organization building it. The OS is both infrastructure and product:
 
 - **Dog-food:** 3DL runs on OS. OS improvements immediately benefit 3DL operations.
-- **Product:** OS is the platform offering. "Here's an AI enterprise OS — define your agents, your workflow rules, your authority model. The OS handles state, surfaces, and orchestration."
-- **3DL is the reference implementation:** Proof it works, built by using it.
-- **Gas Town:** The portfolio of projects running on OS IS the demo. "I run N complex projects simultaneously through this platform."
+- **Product:** OS is the platform offering. "Here's an AI enterprise OS — define your agents, your workflow rules, your authority model, your staff roles. The OS handles state, surfaces, orchestration, and people management."
+- **3DL is the reference implementation:** Proof it works, built by using it. One founder, multiple projects, AI executive team, staff queue driving all human work.
 
 ## Critical Path
 
@@ -819,7 +818,7 @@ Atom is not multi-tenant. Each organization gets its own instance (own repos, ow
 ## Build vs. Buy
 
 **Evaluated alternatives:**
-- **Linear + wrapper:** Great UI, but vendor lock-in, per-seat fees, not git-backed, doesn't support Gas Town model
+- **Linear + wrapper:** Great UI, but vendor lock-in, per-seat fees, not git-backed, no AI-native orchestration
 - **Notion + wrapper:** Good for docs, bad for state machine, slow API, vendor lock-in
 - **n8n/Windmill:** Workflow metaphor doesn't match AI management backplane, over-engineered
 
@@ -827,11 +826,10 @@ Atom is not multi-tenant. Each organization gets its own instance (own repos, ow
 
 **Rationale:**
 1. **Cost:** Comparable to alternatives at small scale, cheaper at larger scale (no per-seat fees)
-2. **Value alignment:** AI-native, git-backed, multi-project — no existing tool does this
-3. **Gas Town signal:** Building it IS the portfolio spoke
-4. **Dog-foodable:** Use it to build itself from day 1
-5. **Control:** Define UX, mental model, token optimization strategy
-6. **Infrastructure simplicity:** $7-10/mo hosting, no databases, no DevOps complexity
+2. **Value alignment:** AI-native, git-backed, multi-project, people management — no existing tool does this
+3. **Dog-foodable:** Use it to build itself from day 1
+4. **Control:** Define UX, mental model, token optimization strategy
+5. **Infrastructure simplicity:** $7-10/mo hosting, no databases, no DevOps complexity
 
 ## Sources
 
