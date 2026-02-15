@@ -4,7 +4,36 @@
 
 ## Project
 
-**OS**: The project operating system — shared tooling, user-level Claude instructions, and project template. This is the first thing cloned on a new machine. Everything here is project-agnostic; if it's specific to one project, it belongs in that project's repo instead.
+**OS**: The AI Enterprise OS — a three-layer platform where AI agents manage organizational workflows through three surfaces (Console, Web, Teams). The OS provides domain-agnostic infrastructure: state management (bd/beads), REST API, web dashboard, Teams bot, agent invocation, and Docker conventions. Organizations configure it; projects consume it.
+
+Architecture: `docs/architecture.md` (the founding design doc — read it, don't rewrite it).
+
+## CURRENT PHASE: Deploy and Ship (2026-02-15)
+
+**The architecture doc is DONE. The API and bot code are WRITTEN. Nothing is RUNNING.**
+
+Your job is to get this system live, not design more of it. Run `bd ready --no-daemon` for your work queue. Follow the dependency chain starting from the first unblocked P0 task.
+
+### Hard Rules for This Phase
+
+1. **DO NOT write design docs, protocol specs, or framework features.** The architecture doc is complete. The signal protocol spec exists. The bootstrap CLI exists. Stop designing, start deploying.
+2. **DO NOT extend bin/os, os-check, or the version alignment system.** These are frozen (os-57b, os-pqb, os-snn). They were premature abstractions for multi-org/multi-install scenarios that don't exist.
+3. **DO NOT build for hypothetical scale.** There is ONE org (3DL), ONE user, ONE machine. Build for that. Multi-org, multi-tenant, version compliance — all irrelevant until the single-org case works end-to-end.
+4. **Ship means RUNNING, not "code exists."** A task is done when the thing serves real requests, not when unit tests pass with mocks. If docker-compose up doesn't work, the code isn't done.
+5. **Fix what breaks on first real run.** The existing code was tested with mocks. Real execution will surface real bugs. Fixing them IS the high-value work.
+6. **The finish line is os-844:** trigger agent work from a surface (Teams or Web), see the result appear in all three surfaces. When that works, the OS self-hosts its AI team.
+
+### What Exists (Inventory)
+
+| Component | Code | Status |
+|-----------|------|--------|
+| API server (`api/main.py`) | FastAPI, 8 endpoints wrapping bd | Written, never run for real |
+| Teams bot (`bot/`) | Bot Framework, Adaptive Cards | Written, Azure app registered, no backend |
+| Dashboard (`web/render-dashboard`) | Static HTML generator | Running on GitHub Pages, read-only |
+| Agent invocation | **NOT BUILT** | This is the core of self-hosting |
+| Bootstrap CLI (`bin/os`) | 722 lines | FROZEN — do not extend |
+| Signal protocol (`docs/signal-protocol.md`) | 576 line spec | FROZEN — do not build tooling |
+| Version alignment | VERSION + os-check | FROZEN — do not extend |
 
 ## Philosophy: Machines Are Cattle
 
@@ -102,37 +131,44 @@ Changes to `template/` only affect future projects created with `new-project.sh`
 ```
 os/
 ├── CLAUDE.md              # This file — OS repo project instructions
-├── VERSION                # OS version number (integer, increments on notable changes)
-├── CHANGELOG.md           # What changed in each version + backport guidance
-├── setup.sh               # Machine bootstrap (symlinks)
-├── new-project.sh         # Scaffold new project from template
-├── claude/
-│   └── CLAUDE.md          # User-level instructions (symlinked → ~/.claude/)
+├── api/
+│   ├── main.py            # FastAPI server — thin REST wrapper around bd
+│   └── projects.yml       # Project registry for API
+├── bot/
+│   ├── app.py             # aiohttp web server (Teams bot entry point)
+│   ├── bot.py             # Command parsing + handlers
+│   ├── cards.py           # Adaptive Card builders
+│   ├── api_client.py      # Async client for Atom API
+│   ├── config.py          # Config from env vars
+│   └── test_bot.py        # Unit tests (mocked)
+├── web/
+│   ├── render-dashboard   # Static site generator (beads → HTML)
+│   ├── style.css          # Desert Tech design system
+│   └── dashboard-config.yml # Dashboard section config
 ├── docker/
 │   ├── Dockerfile.beads   # Alpine + beads CLI
 │   ├── Dockerfile.gh      # Alpine + GitHub CLI
-│   └── docker-compose.yml # Shared services (PROJECT_ROOT-aware)
+│   ├── Dockerfile.api     # Python + FastAPI
+│   └── docker-compose.yml # Service definitions
 ├── bin/
-│   ├── bd                 # Beads wrapper (symlinked → ~/.local/bin/)
-│   ├── gh                 # GitHub CLI wrapper (symlinked → ~/.local/bin/)
-│   ├── os                 # OS management CLI: bootstrap, status, projects
-│   └── os-check           # Version compliance checker (symlinked → ~/.local/bin/)
+│   ├── bd                 # Beads CLI wrapper (→ ~/.local/bin/)
+│   ├── gh                 # GitHub CLI wrapper (→ ~/.local/bin/)
+│   ├── atom-api           # API server start/stop/logs
+│   ├── atom-bot           # Teams bot start/stop/logs
+│   ├── os                 # Bootstrap CLI (FROZEN)
+│   └── os-check           # Version compliance (FROZEN)
 ├── docs/
-│   ├── spin-up-protocol.md # Conversational project creation protocol
-│   └── bootstrap-config.md # os.yml format spec + bootstrap architecture
-├── template/              # Project skeleton (copied by new-project.sh)
-│   ├── CLAUDE.md          # Project instructions template
-│   ├── BOOTSTRAP.md       # 9-section setup checklist (spin-up aware)
-│   ├── docker-compose.yml # Project-specific services placeholder
-│   ├── .gitignore
-│   └── docs/
-│       ├── agent-TEMPLATE.md
-│       ├── agent-blog.md   # Blog agent (voice profile carries across projects)
-│       ├── product-vision.md
-│       └── blog/
-│           ├── candidates.md
-│           ├── drafts/
-│           └── posts/
+│   ├── architecture.md    # THE founding design doc (read, don't rewrite)
+│   ├── signal-protocol.md # Cross-repo comm spec (FROZEN tooling)
+│   ├── cross-project-protocol.md
+│   ├── spin-up-protocol.md
+│   └── bootstrap-config.md
+├── template/              # Project skeleton (new-project.sh)
+├── claude/
+│   └── CLAUDE.md          # User-level instructions (→ ~/.claude/)
+├── .env                   # Azure credentials (gitignored)
+├── setup.sh               # Machine bootstrap
+├── new-project.sh         # Scaffold new project
 └── .beads/                # Beads database (git-tracked)
 ```
 
