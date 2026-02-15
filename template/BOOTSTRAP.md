@@ -133,6 +133,19 @@ If yes:
 
 ---
 
+## Organization Registration
+
+> **Note:** If this project was created via `new-project.sh --org <name>`, it's already registered in the org's `os.yml`. Skip this section.
+
+Projects are registered in the organization's `os.yml` file (e.g., `~/projects/3dl/os.yml`), not in the project repo itself. Registration makes the project visible to `os status`, `os sweep`, `os inbox`, and the dashboard.
+
+If this project was NOT created via `new-project.sh` (e.g., manual clone or fork), ask the user:
+- **Which organization does this project belong to?**
+
+Then add the project to that org's `os.yml` under `projects:` and run `os bootstrap <org-path>` to regenerate derived configs.
+
+---
+
 ## Finalize
 
 Once all sections are answered:
